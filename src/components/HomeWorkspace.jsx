@@ -33,6 +33,8 @@ import { notificationTargetView, prepareApprovalScope } from '../utils/notificat
 import { getWeekDays } from '../utils/schedule'
 import { t } from '../utils/text'
 import { usePublicMode, useStorePrivacy } from '../visibility'
+import useOperatingStores from '../hooks/useOperatingStores'
+import { storeVisibleInOperatingPeriod } from '../utils/storeOperations'
 
 const SUPER_ROLES = new Set(['developer', 'finance', 'admin'])
 
@@ -302,6 +304,7 @@ export default function HomeWorkspace({ month, store, day, weekStart, user, onNa
   const [alerts, setAlerts] = useState(getAlerts())
   const [sheet, setSheet] = useState(null)
 
+  const operating = useOperatingStores()
   const authorizedStores = visibleStoresFor(user)
   const missingStores = (() => {
     if (!canUseOperations) return []
@@ -312,7 +315,7 @@ export default function HomeWorkspace({ month, store, day, weekStart, user, onNa
     for (const key of Object.keys(localEntries())) {
       if (key.startsWith(prefix) && key.endsWith(suffix)) completed.add(key.split('|')[1])
     }
-    return authorizedStores.filter((item) => !completed.has(item.key))
+    return authorizedStores.filter((item) => operating.some((store) => store.key === item.key) && !completed.has(item.key))
   })()
 
   useEffect(() => {
@@ -369,7 +372,12 @@ export default function HomeWorkspace({ month, store, day, weekStart, user, onNa
     missing: missingStores.length,
     abnormal: activityError ? null : abnormalRows.length,
   }
-  const storeRows = ranking(month, store, day, weekStart).filter((row) => authorizedStores.some((item) => item.key === row.key))
+  const firstPeriodDate = weekStart || (day ? `${month}-${day.slice(3)}` : `${month}-01`)
+  const monthParts = month.split('-').map(Number)
+  const lastPeriodDate = weekStart ? getWeekDays(weekStart).at(-1).date
+    : day ? firstPeriodDate : `${month}-${String(new Date(monthParts[0], monthParts[1], 0).getDate()).padStart(2, '0')}`
+  const periodStores = authorizedStores.filter((item) => storeVisibleInOperatingPeriod(item, firstPeriodDate, lastPeriodDate))
+  const storeRows = ranking(month, store, day, weekStart).filter((row) => periodStores.some((item) => item.key === row.key))
   const activityRows = (notifications || []).slice(0, 5)
 
   const openApproval = () => {

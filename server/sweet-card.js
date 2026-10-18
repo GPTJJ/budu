@@ -41,7 +41,7 @@ import {
   renderSweetCardPresentation,
 } from './sweet-card-presentation.js'
 import { issueSweetCardClaimCredential, revokeSweetCardClaimCredential } from './sweet-card-claim.js'
-import { assertNewRedemptionAccess, rejectSpoof } from './sweet-card-availability.js'
+import { assertNewRedemptionAccess, hasNormalPosForStore, rejectSpoof } from './sweet-card-availability.js'
 import { mirrorUsersToKv } from './user-store.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 import { sweetCardAvailableBalance } from './sweet-card-available-balance.js'
@@ -59,7 +59,7 @@ const wrap = (handler) => async (req, res) => {
     if (status >= 500 && error.reported !== true) console.error('[sweet-card]', error)
     res.status(status).json({
       error: status >= 500 && error.publicSafe !== true ? '服务器暂时无法处理，请稍后重试' : error.message || '服务器错误',
-      ...(error.publicCode ? { code: error.publicCode } : {}),
+      ...(error.publicCode || error.code === 'STORE_CLOSED' ? { code: error.publicCode || error.code } : {}),
     })
   }
 }
@@ -204,13 +204,15 @@ export async function redeemSweetCard({ orderId, token, amountCents, requestKey,
     await settlementCoordinator.lockOrder(tx, orderId)
     const accessOrder = await tx.order.findUnique({ where: { id: orderId }, select: { storeId: true } })
     if (!accessOrder) throw httpError('订单不存在', 404)
-    const authorization = await assertNewRedemptionAccess(tx, accessOrder.storeId, actor.id, { lock: true })
     // Re-read the same economic identity in every fresh transaction snapshot.
     const replay = await tx.sweetCardRedemption.findUnique({ where: { requestKey: String(requestKey) } })
     if (replay) {
+      const user = await tx.user.findUnique({ where: { id: actor.id } })
+      if (!hasNormalPosForStore(user, accessOrder.storeId)) throw httpError('无该门店 POS 权限', 403)
       if (replay.orderId !== orderId) throw httpError('核销幂等键已用于其他订单', 409)
       return { reused: true, redemption: replay, order: await tx.order.findUnique({ where: { id: orderId } }) }
     }
+    const authorization = await assertNewRedemptionAccess(tx, accessOrder.storeId, actor.id, { lock: true })
     const credential = await accountByCredential(tx, token)
     if (!credential) throw httpError('甜意卡 credential 无效', 404)
     await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))::text AS locked', credential.accountId)

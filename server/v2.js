@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { resolveDailyEntrySalesRows } from './daily-sales-authority.js'
 import { prisma, dbReady } from './pg.js'
+import { assertExistingStore, assertOperatingStore, assertOperatingStores, readStoreDirectory } from './store-operation-policy.js'
 import { appendPurposeAudit, assertPurposeActor, cleanReason, purposeError } from './order-purpose-service.js'
 import { isTestOrderPurpose } from '../shared/orderPurpose.js'
 import { sendWechatMarkdown, wecomWebhookUrl } from './wechat-alert.js'
@@ -16,7 +17,7 @@ import { normalizeItemCategory } from './productCategories.js'
 import { materialData, materialExtras, materialIdentifiers } from './material-master.js'
 import { appendProductCostVersion, listProductCostHistory } from './product-cost-authority.js'
 import { resolveStoreName } from './store-names.js'
-import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
+import { isStoreKey } from '../shared/storeDirectory.js'
 import {
   DAILY_ENTRY_CAPABILITIES,
   canAccessTransferStore,
@@ -39,7 +40,7 @@ const wrap = (fn) => async (req, res) => {
   } catch (err) {
     const status = err.status || 500
     if (status >= 500) console.error('[v2]', err)
-    res.status(status).json({ error: err.message || '服务器错误' })
+    res.status(status).json({ error: err.message || '服务器错误', ...(err.code === 'STORE_CLOSED' ? { code: err.code } : {}) })
   }
 }
 
@@ -80,6 +81,20 @@ function whereStores(user, storeKeyParam) {
   return { in: Array.isArray(user.storeKeys) ? user.storeKeys : [] }
 }
 
+async function assertClosedStoreMaintenance(tx, keys, user) {
+  // Match the disable command's lock order. A request-time role must not
+  // outlive a committed account revocation while waiting for a store lock.
+  if (user?.id) await tx.$queryRawUnsafe('SELECT id FROM "User" WHERE id = $1 FOR SHARE', user.id)
+  const actor = user?.id && await tx.user.findUnique({ where: { id: user.id }, select: { role: true, status: true } })
+  for (const key of [...new Set(keys.filter(Boolean))].sort()) {
+    await tx.$queryRawUnsafe('SELECT key FROM "Store" WHERE key = $1 FOR SHARE', key)
+    const store = await tx.store.findUnique({ where: { key } })
+    if (store?.active === false && (actor?.role !== 'developer' || actor?.status !== 'active')) {
+      throw bad('已停用门店的后台善后仅开发者可办理', 403)
+    }
+  }
+}
+
 function dateOnly(s) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s || ''))) throw bad('日期格式应为 YYYY-MM-DD')
   return new Date(`${s}T00:00:00.000Z`)
@@ -89,15 +104,8 @@ function isoDate(d) {
   return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10)
 }
 
-async function ensureStore(storeKey, name) {
-  const key = String(storeKey || '').trim()
-  if (!isFixedStoreKey(key)) throw bad('门店不存在或已停用')
-  const known = resolveStoreName(key) || name
-  return prisma.store.upsert({
-    where: { key },
-    update: { name: known, active: true },
-    create: { key, name: known, active: true },
-  })
+async function ensureStore(storeKey, _name, db = prisma) {
+  return assertExistingStore(db, storeKey)
 }
 
 export async function upsertItem(name, category = 'product') {
@@ -594,7 +602,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   const { storeKey, date, incCents, ord, staffNames, version } = req.body || {}
   if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.EDIT)) throw bad('无权限', 403)
-  const store = await prisma.store.findUnique({ where: { key: storeKey } })
+  const store = await assertOperatingStore(prisma, storeKey)
   const effDate = store?.salesDataSourceEffectiveDate ? store.salesDataSourceEffectiveDate.toISOString().slice(0, 10) : ''
   const source = store?.salesDataSource === 'manual' || (effDate && date && String(date).slice(0, 10) < effDate)
     ? 'manual'
@@ -631,6 +639,7 @@ v2Router.put('/daily-entries', wrap(async (req, res) => {
   const base = { incCents: BigInt(cents), ord: orderCount, staffNames: names, updatedBy: req.user.username }
   const saved = await prisma.$transaction(async (tx) => {
     await tx.$queryRawUnsafe('SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext($1))) l', `daily-entry:${storeKey}:${date}`)
+    await assertOperatingStore(tx, storeKey, { lock: true })
     const current = await tx.dailyEntry.findUnique({ where: { storeKey_date: composite } })
     if (current?.status === 'confirmed' || current?.id !== existing?.id || current?.version !== existing?.version) {
       throw bad('记录已变化或已确认，请重新读取；历史事实需通过更正记录处理', 409)
@@ -680,7 +689,10 @@ v2Router.delete('/daily-entries', wrap(async (req, res) => {
   const d = dateOnly(date)
   const existing = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
   if (existing?.status === 'confirmed') throw bad('已确认每日录入是工资与经营历史事实，禁止硬删除', 409)
-  const result = await prisma.dailyEntry.deleteMany({ where: { storeKey, date: d, status: 'draft' } })
+  const result = await prisma.$transaction(async (tx) => {
+    await assertClosedStoreMaintenance(tx, [storeKey], req.user)
+    return tx.dailyEntry.deleteMany({ where: { storeKey, date: d, status: 'draft' } })
+  })
   res.json({ ok: true, deleted: result.count })
 }))
 
@@ -978,11 +990,12 @@ async function createTransferRequest(req, res, testMode = false) {
   const fromStoreKey = String((req.body || {}).fromStoreKey || '').trim()
   const toStoreKey = String((req.body || {}).toStoreKey || (req.body || {}).storeKey || '').trim()
   if (req.user?.role === 'public') throw bad('无权限', 403)
-  if (!isFixedStoreKey(fromStoreKey)) throw bad('请选择调出门店')
-  if (!isFixedStoreKey(toStoreKey)) throw bad('请选择调入门店')
+  if (!isStoreKey(fromStoreKey)) throw bad('请选择调出门店')
+  if (!isStoreKey(toStoreKey)) throw bad('请选择调入门店')
   if (fromStoreKey === toStoreKey) throw bad('调出门店不能与调入门店相同')
   if (!hasInventoryTransferAll(req.user) && !canAccessTransferStore(req.user, toStoreKey)) throw bad('无权为所选调入门店创建调拨', 403)
   const rows = itemRows(items)
+  await assertOperatingStores(prisma, [fromStoreKey, toStoreKey])
   await ensureStore(fromStoreKey)
   await ensureStore(toStoreKey)
   const createItems = []
@@ -1010,13 +1023,17 @@ async function createTransferRequest(req, res, testMode = false) {
   }
   const created = testMode ? await prisma.$transaction(async tx => {
     const actor = await assertPurposeActor(tx, req.user.id)
+    await assertOperatingStores(tx, [fromStoreKey, toStoreKey], { lock: true })
     const row = await tx.transferRequest.create(creation)
     await appendPurposeAudit(tx, { actor, type: 'transfer', order: row, action: 'CREATE_TEST', reason: req.body.reason, afterPurpose: req.body.purpose, operationKey: testKey, safety: { sourceId: req.body.sourceId, externalNotifications: 'SUPPRESSED' } })
     return row
   }, { isolationLevel: 'Serializable' }).catch(error => {
     if (['P2002','P2034'].includes(error.code)) throw bad('测试创建请求正在并发处理，请使用相同请求标识重试', 409)
     throw error
-  }) : await prisma.transferRequest.create(creation)
+  }) : await prisma.$transaction(async (tx) => {
+    await assertOperatingStores(tx, [fromStoreKey, toStoreKey], { lock: true })
+    return tx.transferRequest.create(creation)
+  })
   const serialized = serializeTransfer(created)
   if (testMode) return res.status(201).json({ ok: true, request: serialized })
   const notificationResult = await deliverTransferRequestNotification({ transfer: serialized }).catch((error) => ({
@@ -1061,14 +1078,17 @@ v2Router.delete('/transfer-requests/:id', wrap(async (req, res) => {
   const transferAdmin = hasInventoryTransferAll(req.user)
   if (!transferAdmin && t.createdBy !== req.user.username) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('仅待备货调拨可撤回', 409)
-  const claimed = await prisma.transferRequest.updateMany({
-    where: { id: t.id, status: 'pending', deletedAt: null },
-    data: { status: 'canceled', withdrawnBy: req.user.username, withdrawnAt: new Date(), updatedAt: new Date() },
-  })
-  if (claimed.count !== 1) throw bad('当前状态不可撤回', 409)
-  const updated = await prisma.transferRequest.findUnique({
-    where: { id: t.id },
-    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+  const updated = await prisma.$transaction(async (tx) => {
+    await assertClosedStoreMaintenance(tx, [t.fromStoreKey, t.toStoreKey], req.user)
+    const claimed = await tx.transferRequest.updateMany({
+      where: { id: t.id, status: 'pending', deletedAt: null },
+      data: { status: 'canceled', withdrawnBy: req.user.username, withdrawnAt: new Date(), updatedAt: new Date() },
+    })
+    if (claimed.count !== 1) throw bad('当前状态不可撤回', 409)
+    return tx.transferRequest.findUnique({
+      where: { id: t.id },
+      include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+    })
   })
   res.json({ ok: true, request: serializeTransfer(updated) })
 }))
@@ -1089,6 +1109,9 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   const shipmentUpdates = transferShipmentUpdates(req.body?.items, t.items)
   const shippedAt = new Date()
   const final = await prisma.$transaction(async (tx) => {
+    // Legacy transfers may retain a temporary location instead of a Store FK.
+    // New creation requires registered Stores; check every actual historical Store.
+    await assertOperatingStores(tx, [t.fromStoreKey, t.toStoreKey].filter((key) => key !== null && key !== undefined), { lock: true })
     const claimed = await tx.transferRequest.updateMany({
       where: { id: t.id, status: 'pending', deletedAt: null },
       data: { status: 'shipped', shippedBy: req.user.username, shippedAt, updatedAt: shippedAt },
@@ -1111,8 +1134,8 @@ v2Router.post('/transfer-requests/:id/ship', wrap(async (req, res) => {
   await notify({
     username: t.createdBy,
     templateKey: 'transfer_shipped',
-    data: { fromStore: resolveStoreName(t.fromStoreKey), toStore: resolveStoreName(t.toStoreKey), count: serialized.items.length, operator: req.user.username },
-    title: `调拨已发货：${resolveStoreName(t.fromStoreKey)} → ${resolveStoreName(t.toStoreKey)}`,
+    data: { fromStore: serialized.fromStoreName, toStore: serialized.storeName, count: serialized.items.length, operator: req.user.username },
+    title: `调拨已发货：${serialized.fromStoreName} → ${serialized.storeName}`,
     content: `${serialized.items.length} 种货品 · 发货人 ${req.user.username}`,
     target: 'inventory-transfer',
     refType: 'transfer',
@@ -1127,14 +1150,17 @@ v2Router.post('/transfer-requests/:id/reject', wrap(async (req, res) => {
   if (!t) throw bad('申请不存在', 404)
   if (!canManageTransferStore(req.user, t.fromStoreKey)) throw bad('无权限', 403)
   if (t.status !== 'pending') throw bad('当前状态不可驳回', 409)
-  const claimed = await prisma.transferRequest.updateMany({
-    where: { id: t.id, status: 'pending', deletedAt: null },
-    data: { status: 'rejected', updatedAt: new Date() },
-  })
-  if (claimed.count !== 1) throw bad('当前状态不可驳回', 409)
-  const updated = await prisma.transferRequest.findUnique({
-    where: { id: t.id },
-    include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+  const updated = await prisma.$transaction(async (tx) => {
+    await assertClosedStoreMaintenance(tx, [t.fromStoreKey, t.toStoreKey], req.user)
+    const claimed = await tx.transferRequest.updateMany({
+      where: { id: t.id, status: 'pending', deletedAt: null },
+      data: { status: 'rejected', updatedAt: new Date() },
+    })
+    if (claimed.count !== 1) throw bad('当前状态不可驳回', 409)
+    return tx.transferRequest.findUnique({
+      where: { id: t.id },
+      include: { items: { include: { item: true } }, fromStore: true, toStore: true },
+    })
   })
   res.json({ ok: true, request: serializeTransfer(updated) })
 }))
@@ -1213,6 +1239,7 @@ v2Router.post('/purchase-requests/:id/receive', wrap(async (req, res) => {
   const operator = req.user.username
   try {
     await prisma.$transaction(async (tx) => {
+      await assertOperatingStore(tx, p.storeKey, { lock: true })
       // The conditional state transition is the idempotency claim. It is part
       // of the same transaction, so a later stock or ledger failure restores
       // the purchase to pending and permits an intentional retry.
@@ -1276,9 +1303,11 @@ v2Router.post('/stock/adjust', wrap(async (req, res) => {
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
   if (!isManager(req.user)) throw bad('仅店长/开发者可调整库存', 403)
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw bad('货品明细不正确')
+  await assertOperatingStore(prisma, storeKey)
   await ensureStore(storeKey)
   const operator = req.user.username
   await prisma.$transaction(async (tx) => {
+    await assertOperatingStore(tx, storeKey, { lock: true })
     for (const it of items) {
       const quantity = Number(it.quantity)
       if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99999999) throw bad('盘点数量应为非负整数')
@@ -1466,10 +1495,12 @@ v2Router.post('/stock/waste', wrap(async (req, res) => {
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
   if (!isManager(req.user)) throw bad('仅店长/开发者可报损', 403)
   if (!Array.isArray(items) || items.length === 0 || items.length > 50) throw bad('货品明细不正确')
+  await assertOperatingStore(prisma, storeKey)
   await ensureStore(storeKey)
   const operator = req.user.username
   const records = []
   await prisma.$transaction(async (tx) => {
+    await assertOperatingStore(tx, storeKey, { lock: true })
     for (const it of items) {
       const quantity = Number(it.quantity)
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999999) throw bad('报损数量应为正整数')
@@ -1539,22 +1570,16 @@ v2Router.get('/waste-records', wrap(async (req, res) => {
 v2Router.get('/stores', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (req.user.role === 'public' || req.user.role === 'cashier') throw bad('无权限', 403)
-  const rows = await prisma.store.findMany({ where: { active: true, key: { in: FIXED_STORE_KEYS } }, orderBy: [{ key: 'asc' }] })
-  res.json({ ok: true, rows: rows.map((r) => ({ key: r.key, name: r.name, district: r.district || '' })) })
+  const rows = await readStoreDirectory(prisma, { includeHistory: true })
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ ok: true, rows })
 }))
 
-/** 门店目录固定为四店，不接受运行时创建。 */
-v2Router.post('/stores', wrap(async (req, res) => {
-  if (!dbReady()) throw bad('数据库未配置', 503)
-  if (!isSuperUser(req.user)) throw bad('仅开发者可管理门店', 403)
-  throw bad('门店目录固定为通盈、官舍、朝外、西单，禁止新增', 403)
-}))
-
-/** 固定门店不可通过业务 API 删除。 */
+/** All registered stores keep permanent identities; use the managed status API. */
 v2Router.delete('/stores/:key', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!isSuperUser(req.user)) throw bad('仅开发者可管理门店', 403)
-  throw bad('固定门店不可删除', 403)
+  throw bad('门店不可删除，请使用停用功能保留历史记录', 403)
 }))
 
 // 员工名单镜像：KV 员工（人员管理）→ PostgreSQL Staff 表（开发者/店长可写）
@@ -1570,13 +1595,8 @@ v2Router.put('/staff', wrap(async (req, res) => {
       const name = String(s.name || '').trim()
       const storeKey = String(s.storeKey || '').trim()
       if (!name || name.length > 30 || !storeKey || storeKey.length > 30) throw bad('员工数据不正确')
-      if (!isFixedStoreKey(storeKey)) throw bad('员工所属门店不在固定门店目录')
       if (allowed && !allowed.includes(storeKey)) throw bad('无权限', 403)
-      await tx.store.upsert({
-        where: { key: storeKey },
-        update: { name: resolveStoreName(storeKey), active: true },
-        create: { key: storeKey, name: resolveStoreName(storeKey), active: true },
-      })
+      await assertExistingStore(tx, storeKey, { lock: true })
       // id 必须唯一：中文名用 codepoint 编码（与前端 StoreEntryPage.staffIdFor 同规则），
       // 避免同门店同字数员工（如 叶芷辰/李飞燕）替换成下划线后互相覆盖
       const encoded = [...String(name)].map((ch) => ch.codePointAt(0).toString(36)).join('')
@@ -1672,17 +1692,21 @@ v2Router.post('/expenses', wrap(async (req, res) => {
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
   const cents = Number(amountCents)
   if (!Number.isInteger(cents) || cents < 0 || cents > 999999999999) throw bad('金额不正确（单位：分）')
+  await assertOperatingStore(prisma, storeKey)
   await ensureStore(storeKey)
-  const row = await prisma.expense.create({
-    data: {
-      id: uid('ex'),
-      storeKey,
-      date: dateOnly(date),
-      category: String(category || '其他').trim().slice(0, 20),
-      amountCents: BigInt(cents),
-      note: String(note || '').trim().slice(0, 200),
-      createdBy: req.user.username,
-    },
+  const row = await prisma.$transaction(async (tx) => {
+    await assertOperatingStore(tx, storeKey, { lock: true })
+    return tx.expense.create({
+      data: {
+        id: uid('ex'),
+        storeKey,
+        date: dateOnly(date),
+        category: String(category || '其他').trim().slice(0, 20),
+        amountCents: BigInt(cents),
+        note: String(note || '').trim().slice(0, 200),
+        createdBy: req.user.username,
+      },
+    })
   })
   res.json({ ok: true, expense: { id: row.id, storeKey: row.storeKey, date: isoDate(row.date), category: row.category, amountCents: row.amountCents.toString(), note: row.note, createdBy: row.createdBy } })
 }))
@@ -1693,7 +1717,10 @@ v2Router.delete('/expenses/:id', wrap(async (req, res) => {
   const row = await prisma.expense.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('费用不存在', 404)
   if (!isSuperUser(req.user) && row.createdBy !== req.user.username) throw bad('无权限', 403)
-  await prisma.expense.delete({ where: { id: row.id } })
+  await prisma.$transaction(async (tx) => {
+    await assertClosedStoreMaintenance(tx, [row.storeKey], req.user)
+    await tx.expense.delete({ where: { id: row.id } })
+  })
   res.json({ ok: true })
 }))
 
@@ -1784,37 +1811,45 @@ v2Router.post('/invoices', wrap(async (req, res) => {
   if (!canInvoice(req.user)) throw bad('无权限', 403)
   const { storeKey, titleType, companyName, taxNo, amountCents, category, email, note } = req.body || {}
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  const invoiceStore = await prisma.store.findUnique({ where: { key: storeKey } })
+  if (invoiceStore?.active === false && req.user.role !== 'developer') throw bad('已停用门店的新开票善后仅开发者可办理', 403)
   const type = titleType === 'personal' ? 'personal' : 'company'
   const name = type === 'company' ? String(companyName || '').trim() : ''
   const no = type === 'company' ? String(taxNo || '').trim().slice(0, 50) : ''
   if (type === 'company') {
     if (!name || name.length > 100) throw bad('请填写公司名称')
-    // 学习公司税号字典，下次输入公司名自动匹配
-    await prisma.invoiceCompany.upsert({
-      where: { name },
-      update: { taxNo: no || undefined, updatedAt: new Date() },
-      create: { id: uid('ic'), name, taxNo: no },
-    })
   }
   const cents = Number(amountCents)
   if (!Number.isInteger(cents) || cents <= 0 || cents > 999999999999) throw bad('金额不正确（单位：分）')
   const mail = String(email || '').trim().slice(0, 120)
   if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) throw bad('邮箱格式不正确')
-  await ensureStore(storeKey)
-  const row = await prisma.invoice.create({
-    data: {
-      id: uid('inv'),
-      storeKey,
-      titleType: type,
-      companyName: name,
-      taxNo: no,
-      amountCents: BigInt(cents),
-      category: String(category || '其他').trim().slice(0, 30),
-      email: mail,
-      note: String(note || '').trim().slice(0, 200),
-      status: 'pending',
-      createdBy: req.user.username,
-    },
+  const row = await prisma.$transaction(async (tx) => {
+    await assertClosedStoreMaintenance(tx, [storeKey], req.user)
+    // Existing Store rows are already locked and authoritative. Avoid a
+    // SHARE-to-UPDATE lock upgrade (and metadata writes) for a normal invoice.
+    if (!await tx.store.findUnique({ where: { key: storeKey } })) await ensureStore(storeKey, undefined, tx)
+    if (type === 'company') {
+      await tx.invoiceCompany.upsert({
+        where: { name },
+        update: { taxNo: no || undefined, updatedAt: new Date() },
+        create: { id: uid('ic'), name, taxNo: no },
+      })
+    }
+    return tx.invoice.create({
+      data: {
+        id: uid('inv'),
+        storeKey,
+        titleType: type,
+        companyName: name,
+        taxNo: no,
+        amountCents: BigInt(cents),
+        category: String(category || '其他').trim().slice(0, 30),
+        email: mail,
+        note: String(note || '').trim().slice(0, 200),
+        status: 'pending',
+        createdBy: req.user.username,
+      },
+    })
   })
   broadcast(
     '新发票申请',
@@ -1832,7 +1867,10 @@ v2Router.post('/invoices/:id/status', wrap(async (req, res) => {
   if (!row) throw bad('发票记录不存在', 404)
   if (row.deletedAt) throw bad('已删除发票不可继续操作', 409)
   if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
-  const updated = await prisma.invoice.update({ where: { id: row.id }, data: { status } })
+  const updated = await prisma.$transaction(async (tx) => {
+    await assertClosedStoreMaintenance(tx, [row.storeKey], req.user)
+    return tx.invoice.update({ where: { id: row.id }, data: { status } })
+  })
   res.json({ ok: true, invoice: serializeInvoice(updated) })
 }))
 
@@ -1863,6 +1901,11 @@ v2Router.post('/mailing-records', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canMailing(req.user)) throw bad('无权限', 403)
   const { method, postage, fee, address, recipient, phone, remark } = req.body || {}
+  const boundKeys = Array.isArray(req.user.storeKeys) ? req.user.storeKeys : []
+  const storeKey = String(req.body?.storeKey || (boundKeys.length === 1 ? boundKeys[0] : '')).trim()
+  if (!storeKey) throw bad('请选择发件门店')
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  await assertOperatingStore(prisma, storeKey)
   const m = String(method || '').trim()
   const p = String(postage || '').trim()
   if (m !== '顺丰邮寄' && m !== '同城闪送') throw bad('邮寄方式不正确')
@@ -1874,19 +1917,23 @@ v2Router.post('/mailing-records', wrap(async (req, res) => {
   const tel = String(phone || '').trim()
   if (!addr || !name || !tel) throw bad('请填写收件地址、收件人、联系方式')
   if (addr.length > 200 || name.length > 50 || tel.length > 30) throw bad('收件信息长度不正确')
-  const row = await prisma.mailingRecord.create({
-    data: {
-      id: uid('mlr'),
-      method: m,
-      postage: p,
-      fee: f || null,
-      address: addr,
-      recipient: name,
-      phone: tel,
-      remark: String(remark || '').trim().slice(0, 200),
-      status: 'pending',
-      createdBy: req.user.username,
-    },
+  const row = await prisma.$transaction(async (tx) => {
+    await assertOperatingStore(tx, storeKey, { lock: true })
+    return tx.mailingRecord.create({
+      data: {
+        id: uid('mlr'),
+        storeKey,
+        method: m,
+        postage: p,
+        fee: f || null,
+        address: addr,
+        recipient: name,
+        phone: tel,
+        remark: String(remark || '').trim().slice(0, 200),
+        status: 'pending',
+        createdBy: req.user.username,
+      },
+    })
   })
   broadcast(
     '新门店邮寄',
@@ -1902,9 +1949,12 @@ v2Router.post('/mailing-records/:id/ship', wrap(async (req, res) => {
   if (!row) throw bad('发件记录不存在', 404)
   if (row.deletedAt) throw bad('已删除邮寄记录不可继续操作', 409)
   if (row.status !== 'pending') throw bad('该记录已发货', 409)
-  const updated = await prisma.mailingRecord.update({
-    where: { id: row.id },
-    data: { status: 'shipped', shippedAt: new Date() },
+  const updated = await prisma.$transaction(async (tx) => {
+    await assertClosedStoreMaintenance(tx, [row.storeKey], req.user)
+    return tx.mailingRecord.update({
+      where: { id: row.id },
+      data: { status: 'shipped', shippedAt: new Date() },
+    })
   })
   res.json({ ok: true, record: serializeMailingRecord(updated) })
 }))
@@ -2225,11 +2275,13 @@ v2Router.post('/members/:id/consumptions', wrap(async (req, res) => {
   if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
   const cents = Number(amountCents)
   if (!Number.isInteger(cents) || cents < 0 || cents > 999999999999) throw bad('金额不正确（单位：分）')
+  await assertOperatingStore(prisma, storeKey)
   await ensureStore(storeKey)
   const member = await prisma.member.findUnique({ where: { id: req.params.id } })
   if (!member) throw bad('会员不存在', 404)
   const points = Math.floor(cents / 100)
   const row = await prisma.$transaction(async (tx) => {
+    await assertOperatingStore(tx, storeKey, { lock: true })
     const c = await tx.memberConsumption.create({
       data: { id: uid('mc'), memberId: member.id, storeKey, date: dateOnly(date), amountCents: BigInt(cents), note: String(note || '').trim().slice(0, 200) },
     })

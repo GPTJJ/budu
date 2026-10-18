@@ -1,4 +1,6 @@
 import crypto from 'node:crypto'
+import { assertOperatingStore } from './store-operation-policy.js'
+import { assertClosedStoreAftercare } from './closed-store-aftercare.js'
 import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
@@ -40,7 +42,7 @@ const wrap = (handler) => async (req, res) => {
     const message = status >= 500 && error.publicSafe !== true
       ? '服务器暂时无法处理，请稍后重试'
       : error.message || '服务器错误'
-    res.status(status).json({ error: message })
+    res.status(status).json({ error: message, ...(error.code === 'STORE_CLOSED' ? { code: error.code } : {}) })
   }
 }
 
@@ -333,6 +335,7 @@ posRouter.post('/pos/orders/:id/refunds', wrap(async (req, res) => {
     reason: req.body?.reason,
     requestKey: req.body?.requestKey,
     operator: req.user.username,
+    actorId: req.user.id,
   })
   const order = await prisma.order.findUnique({ where: { id: current.id }, include: orderInclude() })
   res.status(201).json({ ok: true, refund: serializeRefund(result.refund), order: serializeOrder(order) })
@@ -457,8 +460,7 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
   const previous = await prisma.order.findUnique({ where: { checkoutKey }, include: orderInclude() })
   if (previous) return res.json({ ok: true, reused: true, order: serializeOrder(replayOrder(previous, req.user, storeId, cartHash)) })
 
-  const store = await prisma.store.findUnique({ where: { key: storeId } })
-  if (!store) throw httpError('门店不存在，请先同步门店资料', 404)
+  await assertOperatingStore(prisma, storeId)
   // 查询商品 + combo 口味商品（口味名解析需要）
   const needIds = new Set(normalizedItems.map((item) => item.productId))
   for (const item of normalizedItems) {
@@ -474,7 +476,9 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
   const orderNo = `POS${now.toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)}${crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()}`
 
   try {
-    const order = await prisma.order.create({
+    const order = await prisma.$transaction(async tx => {
+      await assertOperatingStore(tx, storeId, { lock: true })
+      return tx.order.create({
       data: {
         id, orderNo, storeId, cashierId: req.user.id, cashierNameSnapshot: req.user.username,
         subtotal: snapshot.subtotal, discountAmount: snapshot.discountAmount, payableAmount: snapshot.payableAmount,
@@ -485,6 +489,7 @@ posRouter.post('/pos/orders', wrap(async (req, res) => {
         items: { create: snapshot.lines.map((line) => ({ id: `oi-${crypto.randomUUID()}`, ...line })) },
       },
       include: orderInclude(),
+      })
     })
     return res.status(201).json({ ok: true, reused: false, order: serializeOrder(order) })
   } catch (error) {
@@ -608,6 +613,11 @@ posRouter.post('/pos/payments/:id/close', wrap(async (req, res) => {
   const before = await paymentService.result(req.params.id)
   if (!canReadOrder(req.user, before.order)) throw httpError('无权限', 403)
   await requireSweetCardOrderAccess(req.user, before.order)
+  if (before.payment.status === 'success') throw httpError('已支付成功的支付单不能关闭', 409)
+  if (before.payment.status === 'closed') {
+    return res.json({ ok: true, payment: serializePayment(before.payment), order: serializeOrder(before.order) })
+  }
+  await prisma.$transaction(tx => assertClosedStoreAftercare(tx, before.order.storeId, req.user.id))
   const result = await paymentService.closePayment(req.params.id)
   res.json({ ok: true, payment: serializePayment(result.payment), order: serializeOrder(result.order) })
 }))
@@ -630,9 +640,14 @@ posRouter.post('/pos/orders/:id/cancel', wrap(async (req, res) => {
   // E：存在未解决的外部支付时禁止取消（可能已扣款，必须先行核对/撤销到终态）
   const unresolvedPayment = await paymentService.unresolvedPayment(current.id)
   assertOrderCancelable(current, unresolvedPayment)
+  await prisma.$transaction(tx => assertClosedStoreAftercare(tx, current.storeId, req.user.id))
   if (active) await paymentService.closePayment(active.id)
   current = await prisma.order.findUnique({ where: { id: current.id } })
   const changed = await prisma.$transaction(async (tx) => {
+    const savedOrder = await tx.order.findUnique({ where: { id: current.id } })
+    if (!savedOrder || savedOrder.storeId !== current.storeId) throw httpError('订单归属已变化，请刷新后重试', 409)
+    if (!canCancelOrder(req.user, savedOrder)) throw httpError('无权作废该订单', 403)
+    await assertClosedStoreAftercare(tx, savedOrder.storeId, req.user.id)
     await reverseSweetCardRedemption(tx, current.id, { id: req.user.id, name: req.user.username })
     return tx.order.updateMany({
       where: { id: current.id, status: current.status },

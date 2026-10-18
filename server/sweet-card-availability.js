@@ -4,6 +4,7 @@ import { prisma, dbReady } from './pg.js'
 import { hasModuleAccess, hasSweetCardCapability, isSuperUser, MODULE_KEYS, SWEET_CARD_CAPABILITIES } from '../shared/accountPermissions.js'
 import { sweetCardEnabled, sweetCardCommercialEnabled } from './sweet-card-core.js'
 import { httpError } from './pos-core.js'
+import { assertOperatingStore } from './store-operation-policy.js'
 
 // The same module + store scope used by normal POS. Legacy redeem/test grants
 // remain historical data and are not authorities for checkout.
@@ -46,6 +47,8 @@ export async function assertNewRedemptionAccess(tx, storeId, actorId, { lock = f
     }
   }
   const user = await tx.user.findUnique({ where: { id: actorId } })
+  if (!hasNormalPosForStore(user, storeId)) throw httpError('无该门店 POS 权限', 403)
+  await assertOperatingStore(tx, storeId, { payment: true })
   const result = await availabilityFor(tx, storeId, user)
   if (!result.enabled) throw httpError(result.reason, 403)
   return result

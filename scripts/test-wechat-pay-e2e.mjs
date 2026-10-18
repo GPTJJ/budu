@@ -180,7 +180,8 @@ test('E2E：签名错误响应 → 拒绝完成订单（pending + 人工核对�
 test('E2E：灰度——订单门店未授权时创建支付被拒绝（403）', async () => {
   const transport = makeTransport(() => ({ return_code: 'SUCCESS', result_code: 'SUCCESS', transaction_id: 'WX-X' }))
   const { service, db } = buildService(transport)
-  db.orders[0].storeId = 'store-999' // 未授权门店
+  db.orders[0].storeId = 'store-999' // 未授权微信支付门店，门店本身仍合法营业
+  db.stores.push({ key: 'store-999', name: '合成灰度外门店', active: true })
   await withLiveMode(async () => {
     await assert.rejects(
       () => service.createPayment({ orderId: 'order-1', channel: 'wechat', requestKey: 'e2e-request-6', authCode: AUTH_CODE }),

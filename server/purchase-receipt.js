@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from './pg.js';
+import { assertOperatingStore } from './store-operation-policy.js';
 import { canUseProcurement, canManageProcurement, canAccessProcurementStore, isProcurementDeveloper, hasModuleAccess, MODULE_KEYS, normalizeAccountPermissions } from '../shared/accountPermissions.js';
 import { fail, id, json, digest, quantity, unit, date, reason, key, version, open, unique, sum } from './purchase-receipt-core.js';
 import { createReceiptNotice, deliverReceiptNotice, receiptDeliverySummary } from './purchase-receipt-notification.js';
@@ -36,7 +37,8 @@ const wrap = fn => async (req, res) => {
     if (e.code === 'P2002') e = fail('请求或商品绑定已存在，请刷新后重试', 409);
     if (!e.status) console.error('[procurement]', e);
     res.status(e.status || 500).json({
-      error: e.status ? e.message : '采购操作失败，请刷新后核对记录再重试'
+      error: e.status ? e.message : '采购操作失败，请刷新后核对记录再重试',
+      ...(e.code === 'STORE_CLOSED' ? { code: e.code } : {})
     });
   }
 };
@@ -149,11 +151,7 @@ async function prepare(tx, u, content, strict) {
       id: supplierId
     }
   }) : null;
-  const store = storeKey ? await tx.store.findUnique({
-    where: {
-      key: storeKey
-    }
-  }) : null;
+  const store = storeKey ? await assertOperatingStore(tx, storeKey, { lock: true }) : null;
   if (supplierId && !supplier) throw fail('采购供应商不存在');
   if (storeKey && (!store || !store.active)) throw fail('门店不存在或已停用');
   if (strict && (!store || !supplier || !rows.length)) throw fail('请完整选择供应商、门店和商品');
@@ -219,6 +217,14 @@ async function orderedAction(req, action, fn) {
     scope(u, o);
     if (['CLOSE', 'REOPEN'].includes(action)) developer(u);else manage(u);
     if (await replay(tx, op, payload)) return present(o);
+    if (action === 'CANCEL' && o.storeKey) {
+      await tx.$queryRawUnsafe('SELECT key FROM "Store" WHERE key = $1 FOR SHARE', o.storeKey);
+      const store = await tx.store.findUnique({ where: { key: o.storeKey } });
+      if (store?.active === false) developer(u);
+    }
+    if (['EDIT', 'MARK_ORDERED'].includes(action) && o.storeKey) {
+      await assertOperatingStore(tx, o.storeKey, { lock: true });
+    }
     version(o.version, req.body.version);
     const before = json(o);
     await fn(tx, u, o);
@@ -237,7 +243,6 @@ async function orderedAction(req, action, fn) {
 purchaseReceiptRouter.get('/procurement/stores', wrap(async req => ({
   rows: await prisma.store.findMany({
     where: {
-      active: true,
       ...(isProcurementDeveloper(req.user) ? {} : {
         key: {
           in: req.user.storeKeys || []
@@ -246,7 +251,8 @@ purchaseReceiptRouter.get('/procurement/stores', wrap(async req => ({
     },
     select: {
       key: true,
-      name: true
+      name: true,
+      active: true
     }
   })
 })));
@@ -503,6 +509,7 @@ async function receiptWrite(req, resubmit) {
         submitted: true
       };
     }
+    if (o.storeKey) await assertOperatingStore(tx, o.storeKey, { lock: true });
     open(o);
     if (resubmit) {
       if (existing.status !== 'RETURNED') throw fail('只有退回记录可修改提交', 409);

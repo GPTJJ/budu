@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>budu synthetic store management</title></head>
+<body class="bg-canvas"><div id="root"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import SettingsPage from '/src/components/SettingsPage.jsx'
+import PosPage from '/src/components/PosPage.jsx'
+import StoreTransferPage from '/src/components/StoreTransferPage.jsx'
+import PurchaseReceiptPage from '/src/components/PurchaseReceiptPage.jsx'
+import StoreMailingPage from '/src/components/StoreMailingPage.jsx'
+import SchedulePage from '/src/components/SchedulePage.jsx'
+import StoreEntryPage from '/src/components/StoreEntryPage.jsx'
+import OrderRecordsPage from '/src/components/OrderRecordsPage.jsx'
+import ReportCenterPage from '/src/components/ReportCenterPage.jsx'
+import { seedCachedDataForTest, refreshStoreDirectory, getUserData } from '/src/utils/userData.js'
+import { allStores, operatingStores, aggregate } from '/src/utils/selectors.js'
+import { PublicModeProvider } from '/src/visibility.jsx'
+import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
+import '/src/index.css'
+
+const params = new URLSearchParams(location.search)
+const role = params.get('role') || 'developer'
+const user = { id: `synthetic-${role}`, username: 'fixture', status: 'active', role,
+  storeKeys: [params.get('bound') || 'tongying'], permissions: ['store-pos','store-entry','store-schedule','inventory-transfer','inventory-purchase','report-center','procurement_manage'] }
+let stores = [
+  { key:'tongying', name:'北京通盈中心店', district:'朝阳区 · 三里屯', active:true },
+  { key:'guanshe', name:'北京官舍店', district:'朝阳区 · 亮马桥', active:true },
+  { key:'chaowai', name:'北京朝外店', district:'朝阳区 · 朝外', active:false },
+  { key:'xidan', name:'北京西单店', district:'西城区 · 西单', active:true },
+]
+const dynamicStore = () => ({ key:'store-00000000000000000001', name:'合成新门店', district:'合成位置', active:true,
+  createdAt:'2026-10-18T04:00:00.000Z', statusHistory:[{ action:'CREATE_STORE',active:true,executedAt:'2026-10-18T04:00:00.000Z' }] })
+if (params.has('dynamic')) stores.push(dynamicStore())
+const history = { '2026-10|chaowai|10-13':{inc:5300,ord:53,staff:['合成人员']} }
+seedCachedDataForTest({ stores, entries:history, staff:[], inventoryRequests:[] })
+const requests = [], created = new Map()
+let nextFailure = '', readFailures = 0, delay = 0, nextNumber = 2
+const product = { productId:'synthetic-product',name:'合成商品',posCategory:'糖果',salePriceCents:'1000',costPriceCents:'100',unit:'件',isActive:true,sortOrder:1 }
+const json = (value, status=200) => new Response(JSON.stringify(value), {status,headers:{'Content-Type':'application/json'}})
+window.fetch = async (url, options={}) => {
+  const parsed = new URL(url, location.origin), path = parsed.pathname, method = options.method || 'GET'
+  const body = options.body ? JSON.parse(options.body) : null
+  requests.push({ path, method, body })
+  if (path === '/api/v2/stores') {
+    if (method === 'GET') {
+      if (readFailures-- > 0) return json({error:'合成门店读取失败'},503)
+      return json({ok:true,rows:stores})
+    }
+    if (role !== 'developer') return json({error:'无权限'},403)
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+    if (created.has(body.requestKey)) {
+      const previous = created.get(body.requestKey)
+      return JSON.stringify(previous.body) === JSON.stringify(body) ? json(previous.result) : json({error:'请求内容不一致'},409)
+    }
+    const store = {key:`store-${String(nextNumber++).padStart(20,'0')}`,name:body.name,district:body.district,active:body.active,createdAt:'2026-10-18T04:00:00.000Z'}
+    stores = [...stores,store]
+    const result = {ok:true,store}
+    created.set(body.requestKey,{body,result})
+    if (nextFailure === 'create-lost-after-commit') { nextFailure=''; throw new TypeError('合成响应丢失') }
+    return json(result)
+  }
+  if (path.startsWith('/api/v2/stores/')) {
+    if (role !== 'developer') return json({error:'无权限'},403)
+    const key = path.split('/')[4], index = stores.findIndex(store => store.key===key)
+    if (index < 0) return json({error:'门店不存在'},404)
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+    if (nextFailure === 'status-lost-before-commit') { nextFailure=''; throw new TypeError('合成请求未完成') }
+    stores = stores.map((store,i) => i===index ? {...store,...body} : store)
+    if (nextFailure === 'status-lost-after-commit') { nextFailure=''; throw new TypeError('合成响应丢失') }
+    return json({ok:true,store:stores[index],changed:true})
+  }
+  if (path==='/api/userdata') return json({})
+  if (path==='/api/health') return json({ok:true,dbOk:true})
+  if (path==='/api/v2/alerts/status') return json({configured:false})
+  if (path==='/api/v2/wechat/bindings') return json({configured:false,rows:[]})
+  if (path==='/api/v2/store-sales-sources') return json({rows:stores.map(store=>({storeKey:store.key,storeName:store.name,salesDataSource:'manual'}))})
+  if (path==='/api/v2/procurement/stores') return json({ok:true,rows:stores})
+  if (path==='/api/v2/procurement/suppliers') return json({rows:[{id:'synthetic-supplier',name:'合成供应商',active:true}]})
+  if (path==='/api/v2/pos/products') return json({rows:[product]})
+  if (path==='/api/v2/pos/config') return json({mode:'live',mock:false,channels:['cash','wechat']})
+  if (path==='/api/v2/schedules') return json({rows:[],versions:{},emptyVersion:'synthetic'})
+  if (path==='/api/v2/daily-entry/overview') return json({storeKey:parsed.searchParams.get('store'),date:parsed.searchParams.get('date'),salesDataSource:'manual',entry:null,staff:[],pos:null})
+  if (path==='/api/v2/daily-participants') return json({employees:[],substitutes:[],schedule:{unresolved:[]}})
+  if (path==='/api/v2/daily-entry/ledger') return json({storeKey:parsed.searchParams.get('store'),month:parsed.searchParams.get('month'),rows:[]})
+  if (path.startsWith('/api/v2/report-center')) return json({error:'仅检查门店筛选，不加载合成经营报表'},503)
+  return json({ok:true,rows:[],entries:[]})
+}
+window.__storeTest = {
+  requests,
+  fail: (mode, reads=0) => {nextFailure=mode;readFailures=reads},
+  delay: ms => {delay=ms},
+  add: async () => {stores=[...stores,dynamicStore()]; await refreshStoreDirectory()},
+  status: async (key,active) => {stores=stores.map(store=>store.key===key?{...store,active}:store);await refreshStoreDirectory()},
+  read: () => ({all:allStores(),operating:operatingStores(),authority:getUserData().storesAuthority,history:aggregate('2026-10','chaowai'),rows:stores}),
+}
+const page = params.get('page') || 'settings'
+const Component = {settings:SettingsPage,pos:PosPage,transfer:StoreTransferPage,purchase:PurchaseReceiptPage,mailing:StoreMailingPage,schedule:SchedulePage,entry:StoreEntryPage,orders:OrderRecordsPage,report:ReportCenterPage}[page]
+createRoot(document.getElementById('root')).render(React.createElement(PublicModeProvider,{isPublic:false,isStore:false},
+  React.createElement(React.Fragment,null,React.createElement(OverlayStackManager),React.createElement('main',{className:'mx-auto min-w-0 max-w-5xl p-3 sm:p-4'},
+    React.createElement(Component,{user,currentUser:user,onBack:()=>{},onExit:()=>{},onNavigate:()=>{}})))))
+</script></body></html>

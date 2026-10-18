@@ -1,8 +1,7 @@
 /**
- * budu 唯一门店目录。
- *
- * 门店不是运行时可扩展配置：前端选择器、API 校验和 PostgreSQL 查询都必须
- * 以这里的四个 key 为准，避免旧缓存、导入数据或错误请求重新创建幽灵门店。
+ * 原四家门店的初始化种子及历史名称回退。
+ * PostgreSQL Store 是运行时门店目录权威；仅门店管理接口可以新增。
+ * 语法校验不代表门店已存在，业务端还必须查询 PostgreSQL。
  */
 export const FIXED_STORES = Object.freeze([
   Object.freeze({ key: 'tongying', name: '北京通盈中心店', district: '朝阳区 · 三里屯' }),
@@ -14,6 +13,15 @@ export const FIXED_STORES = Object.freeze([
 export const FIXED_STORE_KEYS = Object.freeze(FIXED_STORES.map((store) => store.key))
 
 const FIXED_STORE_KEY_SET = new Set(FIXED_STORE_KEYS)
+
+export const RESERVED_STORE_KEYS = Object.freeze(['all', 'multi'])
+const RESERVED_STORE_KEY_SET = new Set(RESERVED_STORE_KEYS)
+
+/** Store keys fit the existing 30-character business references. */
+export function isStoreKey(value) {
+  return typeof value === 'string' && /^[a-z][a-z0-9_-]{0,29}$/.test(value)
+    && !RESERVED_STORE_KEY_SET.has(value)
+}
 
 export function isFixedStoreKey(value) {
   return FIXED_STORE_KEY_SET.has(String(value || '').trim())

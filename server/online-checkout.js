@@ -6,6 +6,7 @@ import { cents, onlinePaymentAllowed, quoteOnlineCheckout } from './online-check
 import { onlineFinancialTransaction } from './online-financial-transaction.js'
 import { lockSweetCardAccount } from './sweet-card-account-lock.js'
 import { sweetCardAvailableBalance } from './sweet-card-available-balance.js'
+import { assertOnlinePickupOperatingStore } from './online-store-operation.js'
 
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const key = value => {
@@ -52,9 +53,19 @@ async function productEligibility(tx, namespace, line) {
 // No HTTP routes register until this trusted adapter is wired and certified.
 export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillment = async () => {}, wechat, env = process.env, namespace = 'cloudbase-miniprogram' }) {
   if (typeof resolveCatalog !== 'function') throw Error('ONLINE_CATALOG_AUTHORITY_REQUIRED')
+  // A stored same-key settlement is recovery evidence, not permission to buy.
+  // Check its full identity before returning even a terminal result.
+  function assertSubmissionIdentity(prior, quote, userId, id, quoteId, requestKey) {
+    if (!quote || quote.userId !== userId || quote.snapshot.namespace !== namespace
+      || prior.id !== id || prior.userId !== userId || prior.quoteId !== quoteId
+      || prior.namespace !== namespace || prior.externalOrderId !== id
+      || prior.requestKey !== requestKey || prior.requestFingerprint !== digest({ quoteId })) {
+      throw httpError('报价或原订单身份不匹配', 409)
+    }
+  }
   // ReadCommitted after the same advisory lock observes a prior submit that
   // committed while we waited. A read-only Serializable snapshot could be stale.
-  async function submissionFact(userId,id,quoteId) {
+  async function submissionFact(userId,id,quoteId,requestKey) {
     return prisma.$transaction(async tx=>{
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`online-settlement:${id}`}, 0))`
       const prior=await tx.onlineSettlement.findUnique({where:{id}})
@@ -62,10 +73,15 @@ export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillme
       const quote=await tx.onlineCheckoutQuote.findUnique({where:{id:quoteId}})
       if(!quote || quote.userId!==userId || quote.snapshot.namespace!==namespace
         || (prior && (prior.userId!==userId || prior.quoteId!==quoteId)))throw httpError('报价不匹配',409)
-      if(!prior && quote.expiresAt<=new Date()) {
+      if (prior) {
+        assertSubmissionIdentity(prior, quote, userId, id, quoteId, requestKey)
+      } else {
         const used=await tx.onlineSettlement.findUnique({where:{quoteId}})
         if(used)throw httpError('该报价已提交，请查看原订单',409)
-        throw Object.assign(httpError('报价已过期，请重新确认',409),{code:'ONLINE_QUOTE_EXPIRED'})
+        await assertOnlinePickupOperatingStore(tx, quote.snapshot, { lock: true })
+        if(quote.expiresAt<=new Date()) {
+          throw Object.assign(httpError('报价已过期，请重新确认',409),{code:'ONLINE_QUOTE_EXPIRED'})
+        }
       }
       return {prior,quote}
     },{isolationLevel:'ReadCommitted',maxWait:5000,timeout:10000})
@@ -74,7 +90,7 @@ export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillme
     async plan(userId, {quoteId,requestKey:rawKey}) {
       const requestKey=key(rawKey),id=`os-${digest([userId,requestKey])}`
       if(typeof quoteId!=='string' || !quoteId || quoteId.length>160)throw httpError('报价无效',400)
-      const {quote}=await submissionFact(userId,id,quoteId)
+      const {quote}=await submissionFact(userId,id,quoteId,requestKey)
       const payNo = `B${digest(id).slice(0,31)}`
       return {settlementId:id,externalOrderId:id,namespace,payNo,orderNo:payNo,quote}
     },
@@ -84,21 +100,27 @@ export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillme
       await customer(prisma, userId, env)
       const replay = await prisma.onlineCheckoutQuote.findUnique({ where: { id: quoteId } })
       if (replay) {
+        if (replay.userId !== userId || replay.snapshot.namespace !== namespace) throw httpError('报价不匹配', 409)
         if (replay.requestFingerprint !== fingerprint) throw httpError('请求标识已用于其他报价', 409)
         if (replay.expiresAt <= new Date()) throw httpError('报价已失效，请重新确认', 409)
+        await assertOnlinePickupOperatingStore(prisma, replay.snapshot)
         return replay
       }
+      await assertOnlinePickupOperatingStore(prisma, intent)
       const catalog = await resolveCatalog({ userId, intent: structuredClone(intent) })
       if (!catalog || !Array.isArray(catalog.lines) || catalog.lines.length !== intent.lines.length) throw httpError('商品报价暂不可用', 409)
       return onlineFinancialTransaction(prisma, quoteId, async tx => {
         await customer(tx, userId, env)
         const prior = await tx.onlineCheckoutQuote.findUnique({ where: { id: quoteId } })
         if (prior) {
+          if (prior.userId !== userId || prior.snapshot.namespace !== namespace) throw httpError('报价不匹配', 409)
           if (prior.requestFingerprint !== fingerprint) throw httpError('请求标识已用于其他报价', 409)
           if (prior.expiresAt <= new Date()) throw httpError('报价已失效，请重新确认', 409)
+          await assertOnlinePickupOperatingStore(tx, prior.snapshot, { lock: true })
           return prior
         }
         const now = new Date()
+        await assertOnlinePickupOperatingStore(tx, intent, { lock: true })
         await validateFulfillment(tx, intent)
         const account = intent.walletRef ? await walletAccount(tx, userId, intent.walletRef, now) : null
         const available = account ? (await sweetCardAvailableBalance(tx, account)).availableCents : 0n
@@ -145,15 +167,20 @@ export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillme
         return await onlineFinancialTransaction(prisma, id, async (tx, prior) => {
           await customer(tx, userId, env, { newPurchase: !prior })
           if (prior) {
-            if (prior.userId !== userId || prior.requestFingerprint !== fingerprint) throw httpError('请求标识已用于其他订单', 409)
+            const savedQuote = await tx.onlineCheckoutQuote.findUnique({ where: { id: quoteId } })
+            assertSubmissionIdentity(prior, savedQuote, userId, id, quoteId, requestKey)
+            // Identity/state replay must not create a settlement, reserve value,
+            // dispatch payment, or depend on today's store/quote availability.
             return prior
           }
           const quote = await tx.onlineCheckoutQuote.findUnique({ where: { id: quoteId } })
           const now = new Date()
           if (!quote || quote.userId !== userId) throw httpError('报价已失效，请重新确认', 409)
+          if (await tx.onlineSettlement.findUnique({ where: { quoteId } })) throw httpError('该报价已提交，请查看原订单', 409)
           if(quote.expiresAt<=now)throw Object.assign(httpError('报价已失效，请重新确认',409),{code:'ONLINE_EXPIRY_RECHECK_REQUIRED'})
           const q = quote.snapshot, sc = cents(q.sweetCardCents), wx = cents(q.wechatCents)
           if (q.namespace !== namespace) throw httpError('报价渠道不匹配', 409)
+          await assertOnlinePickupOperatingStore(tx, q, { lock: true })
           await validateFulfillment(tx, { fulfillment: q.fulfillment, addressRef: q.addressRef, storeRef: q.commerceIntent?.storeRef })
           let account
           if (sc > 0n) {
@@ -193,7 +220,7 @@ export function createOnlineCheckout(prisma, { resolveCatalog, validateFulfillme
         })
       } catch (error) {
         if(error?.code==='ONLINE_EXPIRY_RECHECK_REQUIRED'){
-          const fact=await submissionFact(userId,id,quoteId)
+          const fact=await submissionFact(userId,id,quoteId,requestKey)
           if(fact.prior)return fact.prior
           throw httpError('报价需重新核对',409)
         }

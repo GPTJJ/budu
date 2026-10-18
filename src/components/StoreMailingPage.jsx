@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import useOperatingStores from '../hooks/useOperatingStores'
+import { useEffect, useState } from 'react'
 import * as XLSX from 'xlsx'
 import {
   ArrowLeft, CalendarDays, Check, ClipboardCopy, FileSpreadsheet, Loader2, MessageCircle, PackageCheck, QrCode, WalletCards, X,
 } from 'lucide-react'
 import { api } from '../utils/api'
-import { allStores } from '../utils/selectors'
+import { allStores, closedStoreMessage } from '../utils/selectors'
 import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
 import {
   MAILING_METHOD,
@@ -95,10 +96,11 @@ const formatTime = (iso) => {
 }
 
 export default function StoreMailingPage({ currentUser, onBack }) {
-  const availableStores = useMemo(() => allStores().filter((store) => {
+  const operating = useOperatingStores()
+  const availableStores = operating.filter((store) => {
     const keys = Array.isArray(currentUser?.storeKeys) ? currentUser.storeKeys : []
     return ['developer', 'admin', 'finance'].includes(currentUser?.role) || keys.includes(store.key)
-  }), [currentUser])
+  })
   const [storeKey, setStoreKey] = useState(availableStores[0]?.key || '')
   const [method, setMethod] = useState(MAILING_METHOD.SF)
   const [postage, setPostage] = useState('包邮')
@@ -121,6 +123,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
   const [notificationFocusId, setNotificationFocusId] = useState(() => takeNotificationRecordFocus('store-mailing'))
 
   const amountCents = shippingAmountCents(shippingTier)
+  const storeOperating = availableStores.some((store) => store.key === storeKey)
   const config = { storeKey, method, postage, shippingTier, paymentConfirmed }
   const selectedStoreName = availableStores.find((store) => store.key === storeKey)?.name || storeKey
   const selectedPresentation = shippingPresentation({
@@ -179,6 +182,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
   })
 
   const generateCustomerQr = async () => {
+    if (!storeOperating) return setQrError(closedStoreMessage(storeKey))
     if (!canGenerateCustomerQr(config)) return
     setSheetKind('customer')
     setQrLoading(true)
@@ -194,6 +198,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
   }
 
   const regenerateCustomerQr = async () => {
+    if (!storeOperating) return setQrError(closedStoreMessage(storeKey))
     if (!qrRequest?.request?.id) return
     setQrLoading(true)
     setQrError('')
@@ -283,7 +288,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
         <div className="space-y-5">
           <label className="block text-sm font-semibold text-slate-600">本次服务门店
             <select value={storeKey} onChange={(event) => setStoreKey(event.target.value)} className="input mt-2 min-h-12 w-full" aria-label="本次服务门店">
-              {availableStores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}
+              {!storeOperating && <option value={storeKey} disabled>{storeKey ? `${allStores().find((store) => store.key === storeKey)?.name || storeKey}（不可新建业务）` : "暂无可经营门店"}</option>}{availableStores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}
             </select>
           </label>
           <ChoiceGroup label="配送方式" options={[MAILING_METHOD.SF, MAILING_METHOD.FLASH]} value={method} onChange={setMethod} />
@@ -316,7 +321,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
             </div>
           )}
 
-          <button type="button" onClick={generateCustomerQr} disabled={!canGenerateCustomerQr(config) || qrLoading} className="btn-primary min-h-12 w-full whitespace-nowrap">
+          <button type="button" onClick={generateCustomerQr} disabled={!storeOperating || !canGenerateCustomerQr(config) || qrLoading} className="btn-primary min-h-12 w-full whitespace-nowrap">
             {qrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
             生成顾客填写二维码
           </button>
@@ -346,7 +351,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
               : !visibleRecords.length ? <div className="empty-state py-12">{activeTab === 'pending' ? '暂无待发货记录' : '暂无已发货记录'}</div>
                 : displayedRecords.map((record) => {
                   const view = shippingPresentation(record)
-                  const storeName = availableStores.find((store) => store.key === record.storeKey)?.name || record.storeKey || '历史记录'
+                  const storeName = allStores().find((store) => store.key === record.storeKey)?.name || record.storeKey || '历史记录'
                   return (
                     <article
                       key={record.id}

@@ -1,5 +1,5 @@
 import { BASE_STORES } from '../data/baseStores.js'
-import { isFixedStoreKey } from '../../shared/storeDirectory.js'
+import { isStoreKey } from '../../shared/storeDirectory.js'
 import {
   commitEntries,
   commitStaff,
@@ -22,7 +22,6 @@ import { addWeeks, getWeekDays } from './schedule.js'
 import { PAYROLL_PARTICIPANT_TYPES } from '../../shared/payrollParticipantAuthority.js'
 import { normalizePayableHours } from '../../shared/payableHoursAuthority.js'
 
-export const STORE_KEYS = BASE_STORES.map((s) => s.key)
 export const ALL_STORES = { key: 'all', name: '全部门店' }
 
 /** day 可能为 '07' 或 '08-07'，统一转成完整日期 YYYY-MM-DD */
@@ -101,19 +100,44 @@ function dailyAdjustmentExplanation(applied) {
 }
 
 export function customStores() {
-  return getStores().filter((store) => isFixedStoreKey(store.key))
+  return getStores().filter((store) => isStoreKey(store.key))
 }
 
 export function allStores() {
-  // 门店目录只允许固定四店；PG 可覆盖展示字段，但不能引入新 key。
+  // Complete PG directory includes active and disabled stores. The four original
+  // names are historical fallbacks only; they never grant operating permission.
   const pg = Array.isArray(getUserData().stores)
-    ? getUserData().stores.filter((store) => isFixedStoreKey(store.key))
+    ? getUserData().stores.filter((store) => isStoreKey(store.key))
     : []
   return [...new Map([...BASE_STORES, ...pg].map((s) => [s.key, s])).values()]
 }
 
+function isRegisteredStoreKey(key) {
+  return allStores().some((store) => store.key === key)
+}
+
 export function allStoreKeys() {
   return allStores().map((s) => s.key)
+}
+
+/** New business requires a verified PG read; stale cache only supports history. */
+export function operatingStores() {
+  if (getUserData().storesAuthority !== 'postgresql') return []
+  return getStores().filter((store) => isStoreKey(store.key) && store.active === true)
+}
+
+export function isOperatingStore(key) {
+  return operatingStores().some((store) => store.key === key)
+}
+
+export function closedStoreMessage(key, pendingPayment = false) {
+  if (getUserData().storesAuthority !== 'postgresql' || !key || allStores().find((store) => store.key === key)?.active !== false) {
+    return '门店营业状态尚未核实，请刷新后再试。'
+  }
+  const label = key === 'chaowai' ? '朝外店' : storeName(key) || '该门店'
+  return pendingPayment
+    ? `${label}已停止营业，该订单无法继续发起支付，请重新选择门店下单。`
+    : `${label}已停止营业，请选择其他门店。`
 }
 
 export function storeName(key) {
@@ -508,7 +532,7 @@ export function dailyStoreStaffRows(month) {
 export function currentEmployeeDirectory(storeKey = 'all') {
   const list = localStaffList()
     .map((e) => ({ ...e, local: true }))
-    .filter((e) => isFixedStoreKey(e.storeKey))
+    .filter((e) => isRegisteredStoreKey(e.storeKey))
   return storeKey === 'all' ? list : list.filter((e) => e.storeKey === storeKey)
 }
 
@@ -571,7 +595,7 @@ export function entryMonthPayroll(monthKey) {
     const freq = {}
     for (const k of rec.stores) freq[k] = (freq[k] || 0) + 1
     const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]
-    rec.storeKey = top && isFixedStoreKey(top[0]) ? top[0] : ''
+    rec.storeKey = top && isRegisteredStoreKey(top[0]) ? top[0] : ''
     rec.storeName = storeName(rec.storeKey)
     delete rec.stores
   }
@@ -608,7 +632,7 @@ function monthPayAdjustmentSummary(name, monthKey) {
 export function employeeList(storeKey, monthKey = null) {
   const local = localStaffList()
     .map((e) => ({ ...e, local: true }))
-    .filter((e) => isFixedStoreKey(e.storeKey))
+    .filter((e) => isRegisteredStoreKey(e.storeKey))
   // 当前人员目录只读取 PostgreSQL employees；历史月份仍可由当月业绩记录补出姓名。
   const base = [...new Map(local.map((e) => [e.name, e])).values()]
   let list = base.filter((e) => storeKey === 'all' || e.storeKey === storeKey)
@@ -674,7 +698,7 @@ export function employeeList(storeKey, monthKey = null) {
         const freq = {}
         for (const k of st.stores) freq[k] = (freq[k] || 0) + 1
         const top = Object.entries(freq).sort((a, b) => b[1] - a[1])[0]
-        st.storeKey = top && isFixedStoreKey(top[0]) ? top[0] : (isFixedStoreKey(st.storeKey) ? st.storeKey : '')
+        st.storeKey = top && isRegisteredStoreKey(top[0]) ? top[0] : (isRegisteredStoreKey(st.storeKey) ? st.storeKey : '')
         st.storeName = storeName(st.storeKey)
         delete st.stores
       }

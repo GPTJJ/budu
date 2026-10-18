@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, Building2, CalendarDays, CheckCircle2, ChevronDown, FileSpreadsheet, Pencil, ShieldAlert, Users, WalletCards,
 } from 'lucide-react'
-import { allStores } from '../utils/selectors'
+import { allStores, closedStoreMessage, isOperatingStore } from '../utils/selectors'
+import useOperatingStores from '../hooks/useOperatingStores'
+import useStoreDirectory from '../hooks/useStoreDirectory'
 import { centsToYuan, formatCents, yuanToCents } from '../utils/pos'
 import { api } from '../utils/api'
 import { loadUserData, onUserDataUpdated, refreshDailyStoreStaffMonth } from '../utils/userData'
@@ -203,12 +205,15 @@ function StaffMultiSelect({ participants, selectedRows, onToggle, disabled }) {
 }
 
 export default function StoreEntryPage({ user, onBack, registerNavigationGuard }) {
+  const operating = useOperatingStores()
+  const directory = useStoreDirectory()
   // 门店范围：与全局 Header 同口径——超管/财务/管理员全量，其余角色仅限账号绑定门店
   const visibleStores = useMemo(() => {
-    if (user?.role === 'developer' || user?.role === 'public' || user?.role === 'finance' || user?.role === 'admin') return allStores()
-    return allStores().filter((s) => (user?.storeKeys || []).includes(s.key))
-  }, [user])
-  const [store, setStore] = useState(() => (visibleStores[0] ? visibleStores[0].key : ''))
+    if (user?.role === 'developer' || user?.role === 'public' || user?.role === 'finance' || user?.role === 'admin') return directory
+    return directory.filter((s) => (user?.storeKeys || []).includes(s.key))
+  }, [user, directory])
+  const entryStores = operating.filter((candidate) => visibleStores.some((store) => store.key === candidate.key))
+  const [store, setStore] = useState(() => entryStores[0]?.key || '')
   const [date, setDate] = useState(todayStr)
   const [overview, setOverview] = useState(null)
   const [loadingOverview, setLoadingOverview] = useState(true)
@@ -268,9 +273,10 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   const salesDataStatus = overview?.salesDataStatus || 'waiting_input'
   const pos = overview?.pos || null
   const adjustmentCents = overview?.entry ? BigInt(overview.entry.hybridAdjustmentCents) : 0n
-  const canEdit = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.EDIT)
-  const canConfirm = hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.CONFIRM)
-  const canRevise = canCorrectDailyPerformance(user)
+  const storeOperating = entryStores.some((candidate) => candidate.key === store)
+  const canEdit = storeOperating && hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.EDIT)
+  const canConfirm = storeOperating && hasDailyEntryCapability(user, DAILY_ENTRY_CAPABILITIES.CONFIRM)
+  const canRevise = canCorrectDailyPerformance(user) && (storeOperating || user?.role === 'developer')
   const canEditSales = source === 'manual' && ((canEdit && !confirmed) || (canRevise && confirmed && revisionMode))
   const hasHistoricalStaff = staffRows.some((row) => row.payableHoursSource === 'LEGACY_PAYROLL_HOURS')
   const canEditStaff = ((canEdit && !confirmed) || (canRevise && confirmed && revisionMode)) && !hasHistoricalStaff
@@ -516,6 +522,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
   }
 
   const confirmEntry = async (storeConfirmed = false) => {
+    if (!storeOperating) return setError(closedStoreMessage(store))
     const authority = requireLoadedAuthority()
     if (!authority) return
     if ((user?.storeKeys || []).length > 1 && storeConfirmed !== true) { setStoreConfirmation(true); return }
@@ -680,8 +687,8 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       <div className="card p-5">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label={t('门店')} icon={Building2}>
-            <select data-testid="daily-entry-store" value={store} onChange={(e) => { const next = e.target.value; requestTransition(() => setStore(next)) }} className={inputCls}>
-              {visibleStores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
+            {!storeOperating && <p role="status" className="mb-2 text-xs text-amber-700">{closedStoreMessage(store)} 原有历史仍可在下方账本查看。</p>}<select data-testid="daily-entry-store" value={store} onChange={(e) => { const next = e.target.value; requestTransition(() => setStore(next)) }} className={inputCls}>
+              {!storeOperating && <option value={store} disabled>{store ? `${storeInfo?.name || store}（历史只读）` : "暂无可经营门店"}</option>}{entryStores.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
             </select>
           </Field>
           <Field label={t('日期')} icon={CalendarDays}>
@@ -836,7 +843,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
       <section className={`card min-w-0 p-4 sm:p-5 ${ledgerStyles.container}`} data-testid="daily-fact-ledger">
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <h3 className="text-[15px] font-bold text-slate-800">每日事实账本</h3>
-            {canRevise && <button type="button" onClick={() => setHistoricalCorrection({ initialStore: ledgerStore, initialDate: `${ledgerMonth}-01`, supplement: true })} className="btn-secondary ml-auto min-h-11 shrink-0 whitespace-nowrap px-4 py-2">历史补录</button>}
+            {canRevise && (isOperatingStore(ledgerStore) || user?.role === "developer") && <button type="button" onClick={() => setHistoricalCorrection({ initialStore: ledgerStore, initialDate: `${ledgerMonth}-01`, supplement: true })} className="btn-secondary ml-auto min-h-11 shrink-0 whitespace-nowrap px-4 py-2">历史补录</button>}
           </div>
           <p className="mt-1 text-xs leading-5 text-slate-400">仅展示已保存的营业与实际值班事实，不使用当前排班反推历史。</p>
           <div className={`mt-4 ${ledgerStyles.filters}`}>
@@ -1003,7 +1010,7 @@ export default function StoreEntryPage({ user, onBack, registerNavigationGuard }
                 </div>
               </section>
 
-              {canRevise && <button type="button" onClick={() => setHistoricalCorrection({ initialStore: ledgerDetail.storeKey, initialDate: ledgerDetail.date })} className="btn-primary mt-4 min-h-11 w-full">更正记录</button>}
+              {canRevise && (isOperatingStore(ledgerDetail.storeKey) || user?.role === "developer") && <button type="button" onClick={() => setHistoricalCorrection({ initialStore: ledgerDetail.storeKey, initialDate: ledgerDetail.date })} className="btn-primary mt-4 min-h-11 w-full">更正记录</button>}
               {ledgerDetail.baseStatus === 'draft' && canEdit && (
                 <button type="button" onClick={() => handleLedgerEdit(ledgerDetail)} className="mt-5 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-budu-500 px-4 py-2.5 text-sm font-semibold text-white">
                   <Pencil className="h-4 w-4" />继续填写这一天

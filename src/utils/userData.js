@@ -1,5 +1,6 @@
 import { api } from './api.js'
 import { monthsInPayrollRange } from './payrollPeriod.js'
+import { isStoreDirectoryRows } from './storeDirectory.js'
 
 /**
  * 共享数据层：登录后从服务端加载「业绩录入 + 员工名单」，
@@ -14,6 +15,7 @@ let activeUserId = ''
 let userDataGeneration = 0
 let staffMonthRequestSequence = 0
 let baseRequestSequence = 0
+let storeDirectoryRequestSequence = 0
 const personnelReadStates = new Map()
 const personnelReadListeners = new Set()
 export function onPersonnelReadStateUpdated(listener) {
@@ -51,6 +53,7 @@ const inflightStaffMonths = new Map()
 function invalidateMonthlyAttendanceCache({ clearPayload = true } = {}) {
   userDataGeneration += 1
   baseRequestSequence += 1
+  storeDirectoryRequestSequence += 1
   personnelReadStates.clear()
   staffMonthStates.clear()
   inflightStaffMonths.clear()
@@ -91,6 +94,7 @@ function normalizeCachedData(value) {
     analysis: source.analysis && typeof source.analysis === 'object' ? source.analysis : {},
     productImages: source.productImages && typeof source.productImages === 'object' ? source.productImages : {},
     stores: Array.isArray(source.stores) ? source.stores : [],
+    storesAuthority: source.storesAuthority === 'postgresql' ? 'postgresql' : 'unavailable',
     schedules: source.schedules && typeof source.schedules === 'object' ? source.schedules : {},
     products: Array.isArray(source.products) ? source.products : [],
     inventoryRequests: Array.isArray(source.inventoryRequests) ? source.inventoryRequests : [],
@@ -125,6 +129,7 @@ export async function loadUserData(options = {}) {
     activateUser(userId)
   }
   const sequence = ++baseRequestSequence
+  const storeSequence = ++storeDirectoryRequestSequence
   beginPersonnelRead(sequence)
   // Loading metadata is not a business-data commit. Do not trigger other
   // domains' authoritative-data refresh handlers before a response arrives.
@@ -178,6 +183,7 @@ export async function loadUserData(options = {}) {
   for (const domain of ['entries', 'staff', 'stores', 'dailyPayAdjustments', 'bigBonuses', 'dailyStoreStaffByMonth']) {
     nextCache[domain] = cached[domain]
   }
+  nextCache.storesAuthority = cached.storesAuthority
   const result = (index) => (requests[index]?.status === 'fulfilled' ? requests[index].value : null)
 
   // v2（PostgreSQL）为业绩数据唯一权威源：即使 PG 返回空也是事实（无 KV 回退）。
@@ -210,10 +216,16 @@ export async function loadUserData(options = {}) {
     console.error(`[data-authority] 员工名单读取失败（PostgreSQL 不可用），${prevStaff.length > 0 ? '展示上次 PG 成功缓存' : '不使用 KV 回退'}`)
   }
 
-  // DA-2.3：门店目录权威 = PG /v2/stores（静态 BASE_STORES 仅作同步渲染种子，PG 覆盖）
+  // DA-2.3：PG 门店目录。收银账号仍按原权限不能访问 /v2/stores；
+  // /userdata 只有服务器明确标记的 PG 授权投影可补充该读取，旧 KV 不能回退。
   const storesRes = result(9)
-  if (storesRes && Array.isArray(storesRes.rows)) {
-    nextCache.stores = storesRes.rows
+  const projectedStores = data?.storesAuthority === 'postgresql'
+    && isStoreDirectoryRows(data.stores)
+    ? data.stores : null
+  const storeDirectoryRows = isStoreDirectoryRows(storesRes?.rows) ? storesRes.rows : projectedStores
+  if (storeSequence === storeDirectoryRequestSequence) {
+    if (storeDirectoryRows) nextCache.stores = storeDirectoryRows
+    nextCache.storesAuthority = storeDirectoryRows ? 'postgresql' : 'unavailable'
   }
 
   const adjustments = result(1)
@@ -356,7 +368,8 @@ export async function loadUserData(options = {}) {
     }))
   }
   for (const [domain, index] of [['entries', 0], ['staff', 8], ['stores', 9], ['dailyPayAdjustments', 1], ['bigBonuses', 7]]) {
-    const value = result(index)
+    if (domain === 'stores' && storeSequence !== storeDirectoryRequestSequence) continue
+    const value = domain === 'stores' ? (storeDirectoryRows ? { rows: storeDirectoryRows } : null) : result(index)
     finishPersonnelRead(domain, !!value && Array.isArray(value.rows), value?.rows?.length || 0, sequence)
   }
   // One synchronous commit. Monthly attendance owns its immutable month entries.
@@ -697,9 +710,47 @@ export function getStores() {
   return Array.isArray(getUserData().stores) ? getUserData().stores : []
 }
 
+/** Refresh only the store directory; existing business forms and drafts stay mounted. */
+export async function refreshStoreDirectory() {
+  const owner = { userId: activeUserId, generation: userDataGeneration }
+  const sequence = ++storeDirectoryRequestSequence
+  const ownsSession = () => owner.userId === activeUserId && owner.generation === userDataGeneration
+  const ownsRead = () => ownsSession() && sequence === storeDirectoryRequestSequence
+  try {
+    let rows
+    try {
+      const result = await api('/v2/stores')
+      rows = result?.rows
+    } catch (error) {
+      if (error?.status !== 403) throw error
+      // Cashier accounts keep their existing, explicitly authorized PG projection.
+      const projected = await api('/userdata')
+      if (projected?.storesAuthority === 'postgresql') rows = projected.stores
+    }
+    if (!isStoreDirectoryRows(rows)) throw new Error('门店状态读取失败，请刷新后重试')
+    if (!ownsRead()) return ownsSession() ? getStores() : []
+    if (!cached) cached = normalizeCachedData(null)
+    const changed = cached.storesAuthority !== 'postgresql' || JSON.stringify(cached.stores) !== JSON.stringify(rows)
+    cached.stores = rows
+    cached.storesAuthority = 'postgresql'
+    finishPersonnelRead('stores', true, rows.length, baseRequestSequence)
+    if (changed) notifyUserDataUpdated()
+    return rows
+  } catch (error) {
+    if (!ownsRead()) return ownsSession() ? getStores() : []
+    if (!cached) cached = normalizeCachedData(null)
+    cached.storesAuthority = 'unavailable'
+    finishPersonnelRead('stores', false, 0, baseRequestSequence)
+    notifyUserDataUpdated()
+    throw error
+  }
+}
+
 export function commitStores(stores) {
-  // DA-5：门店目录权威 = PG；本函数仅更新本地缓存
+  // Compatibility callers cannot establish business authority by writing cache.
   getUserData().stores = stores
+  getUserData().storesAuthority = 'unavailable'
+  notifyUserDataUpdated()
 }
 
 export function getProducts() {
@@ -756,6 +807,10 @@ export function resetUserData() {
 export function seedCachedDataForTest(data) {
   invalidateMonthlyAttendanceCache()
   cached = normalizeCachedData(data)
+  // Test fixtures explicitly substitute the PG transport; runtime never calls this.
+  if (!Object.prototype.hasOwnProperty.call(data || {}, 'storesAuthority') && isStoreDirectoryRows(data?.stores)) {
+    cached.storesAuthority = 'postgresql'
+  }
   for (const domain of ['staff', 'entries', 'stores', 'dailyPayAdjustments', 'bigBonuses']) {
     finishPersonnelRead(domain, true, Object.keys(cached[domain]).length, baseRequestSequence)
   }

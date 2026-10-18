@@ -14,7 +14,8 @@ import {
   PackageCheck,
   XCircle,
 } from 'lucide-react'
-import { allStores, products } from '../utils/selectors'
+import { allStores, isOperatingStore, closedStoreMessage, products } from '../utils/selectors'
+import useOperatingStores from '../hooks/useOperatingStores'
 import { getInventoryRequests, loadUserData } from '../utils/userData'
 import { TRANSFER_STATUS_LABEL } from '../utils/inventory'
 import { api } from '../utils/api'
@@ -84,7 +85,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
   /** 门店库存版块暂隐藏（后续再开发）；恢复时改为 true 即可 */
   const SHOW_STOCK_PANEL = false
   const isTransfer = type === 'transfer'
-  const stores = allStores()
+  const stores = useOperatingStores()
   const [form, setForm] = useState({
     fromStoreKey: stores[0] ? stores[0].key : '',
     storeKey: stores[1] ? stores[1].key : stores[0] ? stores[0].key : '',
@@ -179,6 +180,8 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
 
   const submit = async () => {
     if (submitting) return
+    const closedKey = [form.storeKey, ...(isTransfer ? [form.fromStoreKey] : [])].find((key) => !isTemporaryLocationKey(key) && !isOperatingStore(key))
+    if (closedKey !== undefined) return setFormError(closedStoreMessage(closedKey))
     setSubmitting(true)
     setFormError('')
     if (isTransfer && form.fromStoreKey === form.storeKey) {
@@ -366,7 +369,7 @@ function LegacyInventoryRequestPage({ type, currentUser, onBack }) {
     setCustomName('')
   }
 
-  const storeDisplay = (key, name) => name || stores.find((s) => s.key === key)?.name || key
+  const storeDisplay = (key, name) => name || allStores().find((s) => s.key === key)?.name || key
 
   const canShip = (r) => canManageTransferStore(currentUser, r.fromStoreKey)
   const canReceive = (r) => canManageTransferStore(currentUser, r.storeKey)

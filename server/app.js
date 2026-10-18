@@ -26,6 +26,9 @@ import { wechatBindCallbackRouter, wechatBindRouter, wechatRecvRouter } from './
 import { ensureNotificationTemplates } from './notification-center.js'
 import { dailyEntryUpgradeRouter } from './daily-entry-upgrade.js'
 import { dailyCorrectionRouter } from './daily-performance-correction.js'
+import { storeClosureRouter } from './store-closure.js'
+import { storeManagementRouter, publicStoreDirectoryRouter } from './store-management.js'
+import { readStoreDirectory } from './store-operation-policy.js'
 import { employeeProfileRouter } from './employee-profile.js'
 import { assetCenterRouter } from './asset-center.js'
 import { paymentCallbackRouter } from './payment-callbacks.js'
@@ -39,8 +42,7 @@ import { authenticateInternalToken } from './internal-auth.js'
 import { isInternalUser, resolveInternalPrincipal } from './principals.js'
 import { normalizeItemCategory } from './productCategories.js'
 import { prisma, dbReady } from './pg.js'
-import { resolveStoreName } from './store-names.js'
-import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
+import { isStoreKey } from '../shared/storeDirectory.js'
 import { startAssetReminderJob } from './asset-reminders.js'
 import { APP_ENV, APP_VERSION, GIT_SHA } from './config.js'
 import * as Sentry from '@sentry/node'
@@ -626,7 +628,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
       removedStaff: allowed([MODULE_KEYS.STAFF]) ? data.removedStaff : [],
       analysis: allowed([MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.FINANCE]) ? data.analysis : {},
       productImages: allowed([MODULE_KEYS.PRODUCT_CENTER, MODULE_KEYS.STORE_POS]) ? data.productImages : {},
-      stores: (data.stores || []).filter((store) => isFixedStoreKey(store.key)),
+      stores: (data.stores || []).filter((store) => isStoreKey(store.key)),
       schedules: allowed([MODULE_KEYS.STORE_SCHEDULE]) ? data.schedules : {},
       products: allowed([MODULE_KEYS.PRODUCT_CENTER]) ? data.products : [],
       inventoryRequests: allowed([MODULE_KEYS.INVENTORY_TRANSFER, MODULE_KEYS.INVENTORY_PURCHASE]) ? data.inventoryRequests : [],
@@ -634,18 +636,22 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     }
   }
 
-  function normalizeStoreKeys(raw) {
+  async function normalizeStoreKeys(raw) {
     if (raw === undefined || raw === null) return null
     if (!Array.isArray(raw) || raw.length > 50) return null
     const seen = new Set()
     const out = []
     for (const k of raw) {
       const key = String(k || '').trim()
-      if (!isFixedStoreKey(key) || seen.has(key)) return null
+      if (!isStoreKey(key) || seen.has(key)) return null
       seen.add(key)
       out.push(key)
     }
-    return out
+    if (!out.length) return out
+    if (!dbReady()) return null
+    const registered = await prisma.store.findMany({ where: { key: { in: out } }, select: { key: true } })
+    const registeredKeys = new Set(registered.map(store => store.key))
+    return out.every(key => registeredKeys.has(key)) ? out : null
   }
 
   function normalizeStaffKey(raw) {
@@ -699,6 +705,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
       return res.status(503).json({ error: 'TEST_AUTHORITY_UNAVAILABLE' })
     }
   })
+  app.use('/api/customer', publicStoreDirectoryRouter)
   app.use('/api/customer/auth/wechat', wechatTestLoginRouter)
   app.use('/api/customer/sweet-card', sweetCardClaimRouter)
   // Production MiniProgram traffic enters only through the signed CloudBase
@@ -754,7 +761,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
   app.use('/api/v2', requireBusiness, payrollAuditAdminRouter)
   app.use('/api/v2', sweetCardAvailabilityRouter)
   app.use('/api/v2', sweetCardRouter)
-  app.use('/api/v2', requireBusiness, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, purchaseReceiptRouter, v2Router)
+  app.use('/api/v2', requireBusiness, storeClosureRouter, storeManagementRouter, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, purchaseReceiptRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {
@@ -802,7 +809,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     if (!ROLES.includes(role)) {
       return res.status(400).json({ error: '角色不正确' })
     }
-    const storeKeys = req.body.storeKeys === undefined ? [] : normalizeStoreKeys(req.body.storeKeys)
+    const storeKeys = req.body.storeKeys === undefined ? [] : await normalizeStoreKeys(req.body.storeKeys)
     if (storeKeys === null) {
       return res.status(400).json({ error: 'storeKeys 格式错误' })
     }
@@ -1006,7 +1013,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     }
     let storeKeys = null
     if (req.body.storeKeys !== undefined) {
-      storeKeys = normalizeStoreKeys(req.body.storeKeys)
+      storeKeys = await normalizeStoreKeys(req.body.storeKeys)
       if (storeKeys === null) {
         return res.status(400).json({ error: 'storeKeys 格式错误' })
       }
@@ -1141,15 +1148,16 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     res.json({ ok: true })
   })
 
-  // ---------- 门店目录固定为四店；旧接口仅保留显式拒绝，防止旧前端重新写入 ----------
+  // Legacy bulk/client-created identities remain disabled; use managed PG APIs.
   app.post('/api/stores', requireAuth, requireModule(MODULE_KEYS.SETTINGS), requireDeveloper, async (req, res) => {
-    res.status(403).json({ error: '门店目录固定为通盈、官舍、朝外、西单，禁止新增' })
+    res.status(410).json({ error: '请使用系统设置中的门店管理新增门店' })
   })
 
   // ---------- 共享数据：读取（业绩录入 + 员工名单，全团队共享） ----------
   app.get('/api/userdata', requireAuth, async (req, res) => {
     const db = await loadDb()
-    res.json(filterUserDataByModules(scopeUserData(db, req.user), req.user))
+    const stores = dbReady() ? await readStoreDirectory(prisma, { includeHistory: true }) : []
+    res.json({ ...filterUserDataByModules(scopeUserData({ ...db, stores }, req.user), req.user), storesAuthority: dbReady() ? 'postgresql' : 'unavailable' })
   })
 
   // ---------- 共享数据：整体保存 ----------
@@ -1435,25 +1443,10 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     res.status(404).json({ error: '前端未构建，请先运行 npm run build' })
   })
 
-  // 门店名称自愈：静态报表中文名 + KV 门店名回填 PG，避免订单/推送显示字母 key
+  // Compatibility startup hook: PostgreSQL names are managed explicitly.
+  // Startup and KV/cache data must never overwrite current names or status.
   async function syncStoreNames() {
-    if (!process.env.DATABASE_URL) return
-    try {
-      const db = await loadDb()
-      const kvNames = new Map((Array.isArray(db.stores) ? db.stores : []).map((s) => [s.key, String(s.name || '')]))
-      const rows = await prisma.store.findMany({ where: { key: { in: FIXED_STORE_KEYS } } })
-      let updated = 0
-      for (const row of rows) {
-        const name = resolveStoreName(row.key, kvNames.get(row.key) || '')
-        if (name && name !== row.name && name !== row.key) {
-          await prisma.store.update({ where: { key: row.key }, data: { name } })
-          updated += 1
-        }
-      }
-      console.log(`[store-names-sync] 完成，更新 ${updated} 家门店名称`)
-    } catch (error) {
-      console.error('[store-names-sync]', error.message)
-    }
+    return
   }
   let startupPromise = null
   function startAppStartupTasks({ promotion = false } = {}) {

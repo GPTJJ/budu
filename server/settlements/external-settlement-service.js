@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { assertOperatingStore } from '../store-operation-policy.js'
 import { buildOrderSnapshot, hashCart, httpError, normalizeCartItems, parseCents } from '../pos-core.js'
 import {
   assertNoClientSettlementState,
@@ -35,6 +36,7 @@ export class ExternalSettlementService {
     const replay = await this.prisma.externalSettlement.findUnique({ where: { requestKey }, include: { order: true } })
     if (replay) return this.replayResult(replay, { storeId, cartHash, dimensions, confirm, actorId })
 
+    await assertOperatingStore(this.prisma, storeId)
     const needIds = new Set(normalizedItems.map((item) => item.productId))
     for (const item of normalizedItems) {
       if (Array.isArray(item.comboFlavorIds)) for (const id of item.comboFlavorIds) needIds.add(id)
@@ -53,6 +55,7 @@ export class ExternalSettlementService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        await assertOperatingStore(tx, storeId, { lock: true })
         await tx.order.create({
           data: {
             id,

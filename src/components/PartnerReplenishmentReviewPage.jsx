@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Check, ClipboardCheck, Download, ImageDown, PackageCheck, RefreshCw, Truck, X } from 'lucide-react'
 import { api } from '../utils/api'
+import { getStores, getUserData, onUserDataUpdated } from '../utils/userData'
+import { isStoreDirectoryRows } from '../utils/storeDirectory'
 import { exportReplenishmentExcel, exportReplenishmentImage } from '../utils/replenishmentExport'
 import { replenishmentQuickRange } from '../utils/replenishmentFilters'
 import { OverlayFooter, OverlayHeader, OverlayPanel, OverlayScrollRegion, OverlayViewport } from './overlay/OverlayPrimitives'
@@ -36,7 +38,7 @@ function StatusPill({ value }) {
 function ShipmentSection({ order, onShipped }) {
   const shippable = ['APPROVED', 'PARTIALLY_SHIPPED'].includes(order.status)
   const [stores, setStores] = useState([])
-  const [storeKey, setStoreKey] = useState('guanshe')
+  const [storeKey, setStoreKey] = useState('')
   const [carrier, setCarrier] = useState('')
   const [trackingNumber, setTrackingNumber] = useState('')
   const [freightType, setFreightType] = useState('PREPAID')
@@ -50,13 +52,41 @@ function ShipmentSection({ order, onShipped }) {
 
   useEffect(() => {
     if (!shippable) return
-    api('/v2/partner-management/fulfillment-stores')
-      .then((data) => { setStores(data.rows || []); setStoreKey(data.defaultStoreKey || 'guanshe') })
-      .catch((nextError) => setError(nextError.data?.message || nextError.message))
+    let cancelled = false
+    let sequence = 0
+    let initialized = false
+    let snapshot = JSON.stringify([getStores(), getUserData().storesAuthority])
+    const readStores = async () => {
+      const current = ++sequence
+      try {
+        const data = await api('/v2/partner-management/fulfillment-stores')
+        if (cancelled || current !== sequence) return
+        if (!isStoreDirectoryRows(data?.rows)) throw new Error('发货门店状态读取失败，请刷新后重试')
+        const available = data.rows.filter((store) => store.active === true)
+        setStores(available)
+        if (!initialized) {
+          initialized = true
+          setStoreKey(available.some((store) => store.key === data.defaultStoreKey) ? data.defaultStoreKey : available[0]?.key || '')
+        }
+      } catch (nextError) {
+        if (cancelled || current !== sequence) return
+        setStores([])
+        setError(nextError.data?.message || nextError.message)
+      }
+    }
+    void readStores()
+    const unsubscribe = onUserDataUpdated(() => {
+      const next = JSON.stringify([getStores(), getUserData().storesAuthority])
+      if (next === snapshot) return
+      snapshot = next
+      void readStores()
+    })
+    return () => { cancelled = true; unsubscribe() }
   }, [shippable])
 
   const submit = async () => {
     if (submitting.current) return
+    if (!stores.some((store) => store.key === storeKey)) return setError('请选择仍营业的发货门店')
     const invalid = order.items.some((item) => {
       const value = Number(quantities[item.id] || 0)
       return !Number.isSafeInteger(value) || value < 0 || value > Number(item.remainingQuantityBase || 0)
@@ -84,13 +114,13 @@ function ShipmentSection({ order, onShipped }) {
       {shippable && <div className="space-y-3 rounded-xl bg-white p-3">
         <p className="text-xs text-slate-500">已按当前待发量预填，可修改差异项；核对后点击确认发货。</p>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-bold text-slate-500">发货门店<select aria-label="发货门店" value={storeKey} onChange={(event) => setStoreKey(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm">{stores.map((store) => <option key={store.key} value={store.key}>{store.name}（{store.key}）</option>)}</select></label>
+          <label className="text-xs font-bold text-slate-500">发货门店<select aria-label="发货门店" value={storeKey} onChange={(event) => setStoreKey(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">请选择</option>{storeKey && !stores.some(store => store.key === storeKey) && <option value={storeKey} disabled>原发货门店不可新建业务，请重选</option>}{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select></label>
           <label className="text-xs font-bold text-slate-500">运费方式<select aria-label="运费方式" value={freightType} onChange={(event) => setFreightType(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="PREPAID">寄付</option><option value="COLLECT">到付</option></select></label>
           <label className="text-xs font-bold text-slate-500">快递公司<input aria-label="快递公司" value={carrier} maxLength={80} onChange={(event) => setCarrier(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" /></label>
           <label className="text-xs font-bold text-slate-500">快递单号<input aria-label="快递单号" value={trackingNumber} maxLength={120} onChange={(event) => setTrackingNumber(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" /></label>
         </div>
         <div className="space-y-2">{order.items.filter((item) => item.approvedQuantityBase > 0).map((item) => <label key={item.id} className="grid items-center gap-2 rounded-xl bg-slate-50 p-3 text-xs font-bold text-slate-600 sm:grid-cols-[1fr_10rem]"><span>{item.productNameSnapshot}<span className="mt-1 block font-normal text-slate-400">已发 {quantity(item.shippedQuantityBase, item.orderUnitSnapshot, item.nativeUnitSnapshot)} · 待发 {quantity(item.remainingQuantityBase, item.orderUnitSnapshot, item.nativeUnitSnapshot)}</span></span><input aria-label={`${item.productNameSnapshot}本次发货数量`} type="number" min="0" max={item.remainingQuantityBase} step="1" disabled={item.remainingQuantityBase === 0} value={quantities[item.id] ?? '0'} onChange={(event) => setQuantities((value) => ({ ...value, [item.id]: event.target.value }))} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm disabled:opacity-50" /></label>)}</div>
-        <button type="button" disabled={busy || !carrier.trim() || !trackingNumber.trim() || !Object.values(quantities).some((value) => Number(value) > 0)} onClick={submit} className="btn-primary min-h-12 w-full disabled:opacity-40"><Truck className="h-4 w-4" />确认发货</button>
+        <button type="button" disabled={busy || !stores.some(store => store.key === storeKey) || !carrier.trim() || !trackingNumber.trim() || !Object.values(quantities).some((value) => Number(value) > 0)} onClick={submit} className="btn-primary min-h-12 w-full disabled:opacity-40"><Truck className="h-4 w-4" />确认发货</button>
       </div>}
       {error && <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm font-semibold text-rose-700">{error}</p>}
     </section>

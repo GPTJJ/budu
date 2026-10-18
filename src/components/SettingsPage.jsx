@@ -20,6 +20,7 @@ import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { DeletedRecordsCenter } from './DeveloperSafeDelete'
 import OrderPurposeCenter from './OrderPurposeCenter'
 import PayrollAuditSchedulerCenter from './PayrollAuditSchedulerCenter'
+import StoreManagementPage from './settings/StoreManagementPage'
 import { canManageOrderPurpose } from '../../shared/orderPurpose'
 import {
   SettingsConfirmDialog,
@@ -297,6 +298,10 @@ export default function SettingsPage({ user, onBack }) {
     return `${posCount} 家 POS · ${sourceStores.length - posCount} 家人工`
   }, [sourceStores])
 
+  if (activePanel === 'stores' && isDeveloper) {
+    return <StoreManagementPage user={user} onBack={() => { closePanel(); void loadSourceStores() }} />
+  }
+
   if (activePanel === 'alert') {
     return (
       <SettingsDetailPage title="企业微信告警" subtitle="库存与系统异常的群机器人提醒" onBack={closePanel}>
@@ -469,6 +474,7 @@ export default function SettingsPage({ user, onBack }) {
 
           {isElevated && (
             <SettingsSection title="门店与 POS">
+              {isDeveloper && <SettingsRow testId="settings-row-stores" icon={Store} iconTone="brand" title="门店管理" subtitle="新增门店、编辑资料与启停" onClick={() => openPanel('stores')} />}
               <SettingsRow testId="settings-row-pos" icon={Store} iconTone="blue" title="POS 点单 / 门店配置" subtitle="销售数据来源与生效日期" status={<SettingsStatus tone="brand">{posSummary}</SettingsStatus>} onClick={() => openPanel('pos')} last />
             </SettingsSection>
           )}

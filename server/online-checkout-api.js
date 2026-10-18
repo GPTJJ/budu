@@ -9,6 +9,7 @@ import { onlinePaymentAllowed } from './online-checkout-policy.js'
 import { sweetCardAvailableBalance } from './sweet-card-available-balance.js'
 import { createOnlineRefundFinalizer } from './online-refund-finalizer.js'
 import { onlineFinancialEnvelope } from './online-financial-transaction.js'
+import { assertOnlinePickupOperatingStore } from './online-store-operation.js'
 
 const hash = value => crypto.createHash('sha256').update(value).digest('hex')
 export function onlineQuotePresentation(quote) {
@@ -25,8 +26,7 @@ export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wech
   const router=express.Router()
   async function fulfillment(tx,intent){
     if(intent.fulfillment==='PICKUP'){
-      const store=typeof intent.storeRef==='string' && await tx.store.findUnique({where:{key:intent.storeRef}})
-      if(!store?.active)throw httpError('自提门店暂不可用',409)
+      await assertOnlinePickupOperatingStore(tx,intent)
     }
   }
   const service=catalog=>createOnlineCheckout(db,{wechat,env,validateFulfillment:fulfillment,resolveCatalog:async()=>catalog})
@@ -43,6 +43,7 @@ export function createOnlineCheckoutRouter({db,gatewayConfig,paymentService,wech
       return res.json({ok:true,result:await fn(req.body,customer)})
     }catch(error){
       const status=Number(error?.status)
+      if (error?.code === 'STORE_CLOSED') return res.status(409).json({ok:false,error:'STORE_CLOSED',code:'STORE_CLOSED',message:error.message})
       return res.status([400,401,403,404,409,429].includes(status)?status:503).json({ok:false,error:status===409 && ['ONLINE_QUOTE_EXPIRED','CATALOG_MAPPING_REQUIRED'].includes(error?.code)?error.code:'ONLINE_CHECKOUT_REQUEST_FAILED'})
     }
   }

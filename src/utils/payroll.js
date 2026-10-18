@@ -44,7 +44,7 @@ export const STORE_PAY_CONFIG = {
 
 const DEFAULT_PAY_CONFIG = { onePersonHours: 12, target: 2000 }
 
-/** 门店别名：新增门店（key 自动生成）也可按门店名匹配到对应薪酬配置 */
+/** 保留旧导入门店的历史别名解释；本次门店管理创建的稳定身份不使用名称匹配。 */
 const STORE_ALIASES = [
   { key: 'tongying', names: ['通盈'] },
   { key: 'xidan', names: ['西单'] },
@@ -55,6 +55,10 @@ const STORE_ALIASES = [
 export function normalizeStoreKey(storeKey, storeName = '') {
   const key = String(storeKey || '')
   if (STORE_PAY_CONFIG[key]) return key
+  // Managed stores use an immutable, independently generated identity. Naming
+  // one after an existing shop must not inherit that shop's payroll policy.
+  // Keep the legacy aliases below unchanged for historical imported records.
+  if (/^store-[a-f0-9]{20}$/.test(key)) return key
   const combined = `${key} ${storeName}`
   for (const alias of STORE_ALIASES) {
     if (alias.names.some((n) => combined.includes(n))) return alias.key

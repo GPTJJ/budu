@@ -25,9 +25,13 @@ export function createOnlineRefund(prisma, { authorize } = {}) {
     const fingerprint = hash([requested, String(shipping), reason])
     return onlineFinancialTransaction(prisma, settlementId, async (tx, settlement) => {
       if (!settlement) throw httpError('订单不存在', 404)
-      const actorId = await authorize(tx, settlement, actor)
-      if (typeof actorId !== 'string' || !actorId) throw httpError('无退款权限', 403)
       const existing = settlement.refunds.find(row => row.requestKey === requestKey)
+      // Replay authority comes only from the locked durable request, never a
+      // client flag. Other callbacks keep their existing first three arguments.
+      const replay = Boolean(existing && existing.settlementId === settlement.id
+        && existing.requestFingerprint === fingerprint)
+      const actorId = await authorize(tx, settlement, actor, { replay })
+      if (typeof actorId !== 'string' || !actorId) throw httpError('无退款权限', 403)
       if (existing) {
         if (existing.requestFingerprint !== fingerprint) throw httpError('原退款请求内容不一致', 409)
         return existing

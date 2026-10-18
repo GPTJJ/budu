@@ -6,6 +6,7 @@ import { createOnlineWechatTransport } from './online-wechat-transport.js'
 import { createOnlineWechatEvidence, createOnlineWechatMessageVerifier, providerAmountMatches } from './online-wechat-evidence.js'
 import { createOnlinePaymentFinalizer } from './online-payment-finalizer.js'
 import { createOnlinePaymentCancellation } from './online-payment-cancellation.js'
+import { assertOnlinePickupOperatingStore } from './online-store-operation.js'
 
 const publicState = s => ({ settlementId: s.id, status: s.status })
 const unknown = () => httpError('支付结果正在核对，请稍后重试原订单', 503)
@@ -70,6 +71,9 @@ export function createOnlinePaymentService(prisma, configuration, { request = cr
       if (!context.wx || context.s.status !== 'PENDING') return publicState(context.s)
       if (context.s.expiresAt <= new Date()) return service.recover(settlementId)
       if (!onlinePaymentAllowed(userId, env)) throw httpError('线上支付暂未开放', 403)
+      // Reconcile a signed result from the original trade before evaluating
+      // new-payment eligibility. The transaction gates below still protect
+      // dispatch markers and payment parameters, including cached prepay IDs.
       const observed = await query(context)
       if (observed.settled) return publicState(observed.settled)
       if (!observed.absent && observed.fact.state !== 'NOTPAY') return publicState(context.s)
@@ -77,6 +81,10 @@ export function createOnlinePaymentService(prisma, configuration, { request = cr
       // lock. A missing prepay response must never be mistaken for no attempt.
       const canSend = await onlineFinancialTransaction(prisma, settlementId, async (tx, s) => {
         if (s.status !== 'PENDING' || s.expiresAt <= new Date() || !onlinePaymentAllowed(userId, env)) return false
+        if (s.userId !== userId) throw httpError('订单不存在', 404)
+        const quote = await tx.onlineCheckoutQuote.findUnique({ where: { id: s.quoteId } })
+        if (!quote || quote.userId !== userId) throw httpError('报价不匹配', 409)
+        await assertOnlinePickupOperatingStore(tx, quote.snapshot, { payment: true, lock: true })
         const wx = s.tenders.find(t => t.type === 'WECHAT')
         if (!wx.prepayRequestedAt) await tx.onlineTender.update({ where: { id: wx.id }, data: { prepayRequestedAt: new Date() } })
         return true
@@ -102,9 +110,14 @@ export function createOnlinePaymentService(prisma, configuration, { request = cr
           if (!wx.prepayId) await tx.onlineTender.update({ where: { id: wx.id }, data: { prepayId } })
         })
       }
-      const current = (await read(settlementId, userId)).s
-      if (current.status !== 'PENDING' || current.expiresAt <= new Date()) return publicState(current)
-      return { ...publicState(current), paymentParameters: parameters(prepayId) }
+      return onlineFinancialTransaction(prisma, settlementId, async (tx, current) => {
+        if (!current || current.userId !== userId) throw httpError('订单不存在', 404)
+        if (current.status !== 'PENDING' || current.expiresAt <= new Date()) return publicState(current)
+        const quote = await tx.onlineCheckoutQuote.findUnique({ where: { id: current.quoteId } })
+        if (!quote || quote.userId !== userId) throw httpError('报价不匹配', 409)
+        await assertOnlinePickupOperatingStore(tx, quote.snapshot, { payment: true, lock: true })
+        return { ...publicState(current), paymentParameters: parameters(prepayId) }
+      })
     },
     async cancel(settlementId, userId) {
       await cancellation.request(settlementId, userId)

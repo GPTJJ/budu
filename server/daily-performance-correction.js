@@ -11,6 +11,18 @@ const digest = (value) => crypto.createHash('sha256').update(JSON.stringify(json
 function authorize(actor) {
   if (!canCorrectDailyPerformance(actor)) throw httpError('仅开发者或最高权限管理员可以更正历史事实', 403)
 }
+async function assertClosedCorrectionStores(tx, keys, actor) {
+  for (const key of [...new Set(keys)].sort()) {
+    if (typeof key !== 'string' || !key.trim()) throw httpError('请选择门店')
+    await tx.$queryRawUnsafe('SELECT key FROM "Store" WHERE key = $1 FOR SHARE', key)
+    const store = await tx.store.findUnique({ where: { key }, select: { key: true, active: true } })
+    if (!store) throw httpError('门店不存在')
+    if (store.active === false && actor?.role !== 'developer') {
+      throw httpError('已停用门店的历史更正仅开发者可办理', 403)
+    }
+  }
+}
+
 function day(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw httpError('营业日期不正确')
   const date = new Date(`${value}T00:00:00.000Z`)
@@ -32,6 +44,7 @@ async function snapshot(tx, storeKey, date) {
 export async function getDailyCorrectionContext(db, { actor, storeKey, date }) {
   authorize(actor)
   return db.$transaction(async (tx) => {
+    await assertClosedCorrectionStores(tx, [storeKey], actor)
     const facts = await snapshot(tx, storeKey, day(date))
     const [stores, employees, audits] = await Promise.all([
       tx.store.findMany({ select: { key: true, name: true }, orderBy: { name: 'asc' } }),
@@ -66,6 +79,7 @@ export async function correctDailyPerformance(db, input) {
       for (const key of [...new Set([from, to])].sort()) {
         await tx.$queryRawUnsafe('SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext($1))) l', `daily-entry:${key}:${input.date}`)
       }
+      await assertClosedCorrectionStores(tx, [from, to], actor)
       const replay = await tx.dailyEntryAuditLog.findUnique({ where: { id: auditId } })
       if (replay) {
         if (replay.afterValue.commandHash !== commandHash) throw httpError('相同请求标识对应不同内容', 409)

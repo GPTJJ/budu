@@ -1,4 +1,6 @@
 import crypto from 'node:crypto'
+import { assertOperatingStore } from '../store-operation-policy.js'
+import { assertClosedStoreAftercare } from '../closed-store-aftercare.js'
 import { httpError } from '../pos-core.js'
 import { assertOrderPaymentTransition, assertOrderTransition } from '../order-state.js'
 import { MockPaymentProvider } from './providers/mock.js'
@@ -199,6 +201,9 @@ export class PaymentService {
     }
     const paymentAmount = order.payableAmount - BigInt(order.sweetCardAmount || 0)
     if (paymentAmount <= 0n) throw httpError('订单已无外部待支付金额')
+    // Existing payment facts above stay readable/replayable after closure.
+    // Only a genuinely new charge uses the server-persisted order ownership.
+    await assertOperatingStore(this.prisma, order.storeId, { payment: true })
     // Provider 自己负责配置完整性和门店灰度；UI 永远不是安全边界。
     const provider = this.provider(providerName)
     if (typeof provider.assertAvailable === 'function') {
@@ -209,6 +214,7 @@ export class PaymentService {
     let payment
     try {
       payment = await this.prisma.$transaction(async (tx) => {
+        await assertOperatingStore(tx, order.storeId, { payment: true, lock: true })
         const created = await tx.payment.create({
           data: {
             id: `pay-${crypto.randomUUID()}`,
@@ -437,6 +443,7 @@ export class PaymentService {
     const requestKey = String(input.requestKey || '').trim()
     const reason = String(input.reason || '').slice(0, 300)
     const operator = String(input.operator || '').slice(0, 80)
+    const actorId = String(input.actorId || '').trim()
     if (!orderId || requestKey.length < 8 || requestKey.length > 160) throw httpError('退款参数不正确')
 
     const replay = await this.prisma.refund.findUnique({ where: { requestKey } })
@@ -539,6 +546,9 @@ export class PaymentService {
     let refund
     try {
       refund = await this.prisma.$transaction(async (tx) => {
+        const savedOrder = await tx.order.findUnique({ where: { id: order.id }, select: { storeId: true } })
+        if (!savedOrder || savedOrder.storeId !== order.storeId) throw httpError('订单归属已变化，请刷新后重试', 409)
+        await assertClosedStoreAftercare(tx, savedOrder.storeId, actorId)
         const created = await tx.refund.create({
           data: {
             id: `ref-${crypto.randomUUID()}`,

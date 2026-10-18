@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
+import { assertOperatingStore } from './store-operation-policy.js'
 import { listUsers } from './user-store.js'
 import { deliverCustomerRequestWecom, publicBaseUrl } from './notification-center.js'
 import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
@@ -35,7 +36,7 @@ const wrap = (fn) => async (req, res) => {
   } catch (error) {
     const status = error.status || 500
     if (status >= 500) console.error('[customer-request]', error.message)
-    res.status(status).json({ error: error.message || '服务器错误' })
+    res.status(status).json({ error: error.message || '服务器错误', ...(error.code === 'STORE_CLOSED' ? { code: error.code } : {}) })
   }
 }
 
@@ -104,7 +105,12 @@ export async function createCustomerServiceRequest({ prismaClient = prisma, user
   const storeKey = String(input?.storeKey || '').trim()
   if (!canUseType(user, type) || !canUseStore(user, storeKey)) throw httpError('无权限', 403)
   const store = await prismaClient.store.findUnique({ where: { key: storeKey } })
-  if (!store || !store.active) throw httpError('门店不存在或已停用', 404)
+  if (!store) throw httpError('门店不存在', 404)
+  if (type === CUSTOMER_REQUEST_TYPES.MAILING) {
+    await assertOperatingStore(prismaClient, storeKey)
+  } else if (store.active === false && user?.role !== 'developer') {
+    throw httpError('已停用门店的新开票善后仅开发者可办理', 403)
+  }
   let metadata = type === CUSTOMER_REQUEST_TYPES.MAILING
     ? validateMailingMetadata(input)
     : validateInvoiceMetadata(input)
@@ -126,6 +132,15 @@ export async function createCustomerServiceRequest({ prismaClient = prisma, user
   const requestId = uid('csr')
   const tokenId = uid('cst')
   const request = await prismaClient.$transaction(async (tx) => {
+    if (type === CUSTOMER_REQUEST_TYPES.MAILING) {
+      await assertOperatingStore(tx, storeKey, { lock: true })
+    } else {
+      await tx.$queryRawUnsafe('SELECT key FROM "Store" WHERE key = $1 FOR SHARE', storeKey)
+      const currentStore = await tx.store.findUnique({ where: { key: storeKey } })
+      if (currentStore?.active === false && user?.role !== 'developer') {
+        throw httpError('已停用门店的新开票善后仅开发者可办理', 403)
+      }
+    }
     const previous = await tx.customerServiceRequest.findMany({
       where: {
         type,
@@ -242,6 +257,9 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
       }
       if (tokenRow.expiresAt <= now || tokenRow.request.expiresAt <= now) {
         throw httpError('二维码已失效，请联系 budu 工作人员重新生成', 410)
+      }
+      if (tokenRow.request.type === CUSTOMER_REQUEST_TYPES.MAILING) {
+        await assertOperatingStore(tx, tokenRow.request.storeKey, { lock: true })
       }
       const input = tokenRow.request.type === CUSTOMER_REQUEST_TYPES.MAILING
         ? validateMailingSubmission(payload)

@@ -1,18 +1,17 @@
 #!/usr/bin/env node
 /**
  * BUDU Data Authority 1.0 — DA-2.3 Store 目录回填脚本
- * 从 KV（db.json）stores + 静态 BASE_STORES 迁移到 PostgreSQL Store 表（幂等 upsert）。
+ * 仅补建缺失的原四家门店；已有 PostgreSQL 资料及启停状态保持原样。
+ * KV、缓存和本脚本均不能覆盖当前门店，也不能停用新建门店。
  * - dry-run：--dry-run 只统计不写入
- * - 输出：CREATE / UPDATE / SKIP / CONFLICT / ERROR
+ * - 输出：CREATE / SKIP / CONFLICT / ERROR
  * 用法：
- *   DATABASE_URL=... node scripts/store-backfill.mjs --db /app/server/data/db.json --dry-run
+ *   DATABASE_URL=... node scripts/store-backfill.mjs --dry-run
  */
-import fs from 'node:fs'
 import { PrismaClient } from '@prisma/client'
-import { FIXED_STORES, isFixedStoreKey } from '../shared/storeDirectory.js'
+import { FIXED_STORES } from '../shared/storeDirectory.js'
 
 const args = process.argv.slice(2)
-const dbFile = args[args.indexOf('--db') + 1] || 'server/data/db.json'
 const dryRun = args.includes('--dry-run')
 
 if (!process.env.DATABASE_URL && !dryRun) {
@@ -21,17 +20,11 @@ if (!process.env.DATABASE_URL && !dryRun) {
 }
 
 const prisma = new PrismaClient()
-const kv = JSON.parse(fs.readFileSync(dbFile, 'utf8'))
-const sources = [
-  ...(Array.isArray(kv.stores) ? kv.stores : [])
-    .filter((store) => isFixedStoreKey(store.key))
-    .map((s) => ({ key: s.key, name: s.name, district: s.district || '' })),
-  ...FIXED_STORES,
-]
+const sources = FIXED_STORES
 const merged = new Map()
 for (const s of sources) if (s.key && s.name) merged.set(s.key, s)
 
-const counters = { CREATE: 0, UPDATE: 0, SKIP: 0, RETIRE: 0, CONFLICT: 0, ERROR: 0 }
+const counters = { CREATE: 0, SKIP: 0, CONFLICT: 0, ERROR: 0 }
 const errors = []
 
 async function run() {
@@ -40,9 +33,7 @@ async function run() {
       const existing = await prisma.store.findUnique({ where: { key } })
       if (!dryRun) {
         if (existing) {
-          const same = existing.name === s.name && (existing.district || '') === s.district
-          if (same && existing.active !== false) counters.SKIP++
-          else { await prisma.store.update({ where: { key }, data: { name: s.name, district: s.district, active: true } }); counters.UPDATE++ }
+          counters.SKIP++
         } else {
           await prisma.store.create({ data: { key, name: s.name, district: s.district } })
           counters.CREATE++
@@ -56,16 +47,6 @@ async function run() {
       // 名称唯一冲突（同 name 不同 key）
       if (e && e.code === 'P2002') { counters.CONFLICT++; errors.push(`${key}(${s.name}): 名称冲突`) }
       else { counters.ERROR++; errors.push(`${key}: ${e.message.slice(0, 120)}`) }
-    }
-  }
-  // 权威集合之外的门店 → 退役（active=false，可逆；不硬删被引用数据）
-  if (!dryRun) {
-    const all = await prisma.store.findMany({ where: { active: true } })
-    for (const row of all) {
-      if (!merged.has(row.key)) {
-        await prisma.store.update({ where: { key: row.key }, data: { active: false } })
-        counters.RETIRE++
-      }
     }
   }
   console.log(JSON.stringify({ mode: dryRun ? 'dry-run' : 'apply', sources: merged.size, counters, errorCount: errors.length }))

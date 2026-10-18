@@ -11,15 +11,30 @@ import { httpError } from './pos-core.js'
 // canonical merchant allowlist before it signs this narrowly scoped request.
 export function createOnlineMerchantRouter({ db, gatewayConfig, logistics = null, wechatLogistics = null, shippingSync = null }) {
   const router = express.Router()
-  async function activeActor(tx, actor){
+  async function activeActor(tx, actor, { settlement, replay = false } = {}){
     if(!actor?.id)throw httpError('商家身份已停用',403)
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${actor.id} FOR SHARE`
-    const current=actor?.id && await tx.user.findUnique({where:{id:actor.id}})
+    const current=actor?.id && await tx.user.findUnique({where:{id:actor.id},select:{id:true,role:true,status:true}})
     if(!current || current.status!=='active')throw httpError('商家身份已停用',403)
+    // Existing durable authorizations keep their original result/replay path.
+    // Only a new command needs the closed-store aftercare authority check.
+    if (settlement && !replay) {
+      const quote = await tx.onlineCheckoutQuote.findUnique({ where: { id: settlement.quoteId } })
+      if (!quote || quote.userId !== settlement.userId || quote.snapshot?.namespace !== settlement.namespace
+        || !['PICKUP', 'DELIVERY'].includes(quote.snapshot.fulfillment)) throw httpError('原订单履约归属需核对', 409)
+      if (quote.snapshot.fulfillment === 'PICKUP') {
+        const storeRef = quote.snapshot.commerceIntent?.storeRef
+        if (typeof storeRef !== 'string' || !storeRef.trim()) throw httpError('原自提门店需核对', 409)
+        await tx.$queryRawUnsafe('SELECT key FROM "Store" WHERE key = $1 FOR SHARE', storeRef)
+        const store = await tx.store.findUnique({ where: { key: storeRef }, select: { key: true, active: true } })
+        if (!store) throw httpError('原自提门店需核对', 409)
+        if (store.active !== true && current.role !== 'developer') throw httpError('闭店后的订单善后仅开发者可办理', 403)
+      }
+    }
     return current.id
   }
-  const refund = createOnlineRefund(db, { authorize: async (tx, settlement, actor) => activeActor(tx,actor) })
-  const fulfillment = createOnlineFulfillment(db, { authorize: async (tx, { actor }) => ({ actorId: await activeActor(tx,actor) }) })
+  const refund = createOnlineRefund(db, { authorize: async (tx, settlement, actor, { replay }) => activeActor(tx,actor,{settlement,replay}) })
+  const fulfillment = createOnlineFulfillment(db, { authorize: async (tx, { settlement, actor, replay }) => ({ actorId: await activeActor(tx,actor,{settlement,replay}) }) })
   const handle = fn => async (req, res) => {
     res.setHeader('Cache-Control', 'no-store')
     try {

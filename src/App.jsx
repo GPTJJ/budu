@@ -2,7 +2,7 @@ import { Suspense, useEffect, useState } from 'react'
 import LoginPage from './components/LoginPage'
 import { AppLoading } from './components/LoadingSkeleton'
 import { api } from './utils/api'
-import { loadUserData, prepareUserDataForUser, resetUserData } from './utils/userData'
+import { loadUserData, onUserDataUpdated, prepareUserDataForUser, refreshStoreDirectory, resetUserData } from './utils/userData'
 import { t } from './utils/text'
 import { lazyRetry } from './utils/lazyRetry'
 import { OverlayStackManager } from './components/overlay/OverlayPrimitives'
@@ -43,6 +43,9 @@ function AuthenticatedApp() {
   const [authLoading, setAuthLoading] = useState(true)
   const [dataReady, setDataReady] = useState(false)
   const [, setDataRevision] = useState(0)
+
+  // Re-render current pages from refreshed PG data without discarding their drafts.
+  useEffect(() => onUserDataUpdated(() => setDataRevision((value) => value + 1)), [])
 
   useEffect(() => {
     let cancelled = false
@@ -87,12 +90,27 @@ function AuthenticatedApp() {
   useEffect(() => {
     if (!user) return undefined
     let busy = false
+    let storeBusy = false
+    let lastStoreRead = Date.now()
+    let storeScope = JSON.stringify([user.role, user.storeKeys || []])
+    const syncStores = async (force = false) => {
+      if (storeBusy || (!force && Date.now() - lastStoreRead < 30000)) return
+      storeBusy = true
+      lastStoreRead = Date.now()
+      try { await refreshStoreDirectory() } catch { /* Directory readers fail closed and keep historical labels. */ }
+      finally { storeBusy = false }
+    }
     const sync = async () => {
       if (busy) return
       busy = true
       try {
         const data = await api('/auth/me')
         if (!data || !data.user) return
+        const nextScope = JSON.stringify([data.user.role, data.user.storeKeys || []])
+        if (nextScope !== storeScope) {
+          storeScope = nextScope
+          void syncStores(true)
+        }
         setUser((prev) => {
           if (!prev) return prev
           const next = data.user
@@ -108,10 +126,11 @@ function AuthenticatedApp() {
       } finally {
         busy = false
       }
+      void syncStores()
     }
     const id = window.setInterval(sync, 3000)
     const onVisible = () => {
-      if (document.visibilityState === 'visible') sync()
+      if (document.visibilityState === 'visible') { sync(); void syncStores(true) }
     }
     window.addEventListener('focus', onVisible)
     document.addEventListener('visibilitychange', onVisible)
@@ -119,7 +138,8 @@ function AuthenticatedApp() {
     try {
       bc = new BroadcastChannel('budu-auth-sync')
       bc.onmessage = (e) => {
-        if (e && e.data && e.data.type === 'auth-changed') sync()
+        if (e && e.data && e.data.type === 'auth-changed') { sync(); void syncStores(true) }
+        if (e?.data?.type === 'stores-changed') void syncStores(true)
       }
     } catch {
       /* 浏览器不支持 BroadcastChannel 时忽略 */

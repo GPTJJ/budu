@@ -12,7 +12,8 @@ import {
   X,
 } from 'lucide-react'
 import { toPng } from 'html-to-image'
-import { allStores, currentEmployeeDirectory } from '../utils/selectors'
+import { allStores, closedStoreMessage, currentEmployeeDirectory } from '../utils/selectors'
+import useOperatingStores from '../hooks/useOperatingStores'
 import { api } from '../utils/api'
 import BuduSuccessFeedback from './feedback/BuduSuccessFeedback'
 import { addWeeks, getWeekDays, getWeekStart, isoWeek, todayStr, weekRangeLabel } from '../utils/schedule'
@@ -32,6 +33,8 @@ function weekFromRows(rows) {
 export default function SchedulePage({ onBack, canEdit = true, user, registerNavigationGuard }) {
   // allStores 可能包含 BASE_STORES 与云端门店的重复 key，按 key 去重
   const stores = [...new Map(allStores().map((s) => [s.key, s])).values()]
+  const writableStores = useOperatingStores()
+  const canWriteStore = (key) => writableStores.some((store) => store.key === key)
   const [weekStart, setWeekStart] = useState(() => getWeekStart())
   // 默认「全部门店」：一次展示所有门店排班详情
   const [storeKey, setStoreKey] = useState('all')
@@ -144,6 +147,8 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
   /** 单次把本轮所有门店修改原子写入 PostgreSQL；失败时保留 draft。 */
   const saveSchedule = async () => {
     if (!dirty || saving) return
+    const closedKey = dirtyStores.find((key) => !canWriteStore(key))
+    if (closedKey) return setErrorTip(`${closedStoreMessage(closedKey)} 当前排班草稿已保留。`)
     setSaving(true)
     setErrorTip('')
     try {
@@ -203,6 +208,7 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
   }
 
   const openEditor = (date, store, index = null) => {
+    if (!canWriteStore(store)) return setErrorTip(closedStoreMessage(store))
     const shift = index === null ? null : (weekShiftsOf(store)[date] || [])[index]
     setEditingDate(date)
     setEditingStore(store)
@@ -216,6 +222,7 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
   }
 
   const confirmAdd = () => {
+    if (!canWriteStore(editingStore)) return setErrorTip(closedStoreMessage(editingStore))
     const employee = staffOptions.find((row) => row.id === draft.employeeId)
     if (!employee) {
       setErrorTip(t('请选择有效员工'))
@@ -238,6 +245,7 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
   }
 
   const removeShift = (store, date, index) => {
+    if (!canWriteStore(store)) return setErrorTip(closedStoreMessage(store))
     const shifts = (weekShiftsOf(store)[date] || []).filter((_, i) => i !== index)
     setWeekShifts(store, date, shifts)
   }
@@ -351,7 +359,7 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
                               {s.time && <p className="mt-0.5 text-[11px] font-semibold text-budu-500">{s.time}</p>}
                               {!s.employeeId && <p className="mt-0.5 text-[10px] font-semibold text-amber-600">{t('需重新选择员工')}</p>}
                             </div>
-                            {canEdit && (
+                            {canEdit && canWriteStore(store) && (
                               <div className="flex shrink-0 items-center" data-export-ignore="1">
                                 <button
                                   onClick={() => openEditor(d.date, store, i)}
@@ -377,7 +385,7 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
                     {shifts.length === 0 && (
                       <p className="grid flex-1 place-items-center pb-4 text-[11px] text-slate-300">{t('暂无排班')}</p>
                     )}
-                    {canEdit && (
+                    {canEdit && canWriteStore(store) && (
                       <button
                         data-export-ignore="1"
                         onClick={() => openEditor(d.date, store)}

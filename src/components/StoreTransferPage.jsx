@@ -3,7 +3,8 @@ import {
   ArrowLeft, ArrowRight, Check, ChevronRight, Download, FileSpreadsheet, Filter,
   Minus, PackageCheck, Plus, RefreshCcw, Search, Trash2, Truck, X,
 } from 'lucide-react'
-import { allStores } from '../utils/selectors'
+import { allStores, closedStoreMessage } from '../utils/selectors'
+import useOperatingStores from '../hooks/useOperatingStores'
 import { getInventoryRequests, loadUserData } from '../utils/userData'
 import { api } from '../utils/api'
 import { canManageTransferStore, hasInventoryTransferAll } from '../../shared/accountPermissions'
@@ -101,10 +102,11 @@ function TransferDeliveryDetail({ value }) {
 
 export default function StoreTransferPage({ currentUser, onBack }) {
   const stores = allStores()
+  const newStores = useOperatingStores()
   const transferAll = hasInventoryTransferAll(currentUser)
-  const ownStoreKeys = (currentUser?.storeKeys || []).filter((key) => stores.some((store) => store.key === key))
-  const defaultTo = ownStoreKeys[0] || stores[0]?.key || ''
-  const defaultFrom = stores.find((store) => store.key !== defaultTo)?.key || ''
+  const ownStoreKeys = (currentUser?.storeKeys || []).filter((key) => newStores.some((store) => store.key === key))
+  const defaultTo = ownStoreKeys[0] || (transferAll ? newStores[0]?.key : '') || ''
+  const defaultFrom = newStores.find((store) => store.key !== defaultTo)?.key || ''
   const [screen, setScreen] = useState('records')
   const [listTab, setListTab] = useState('pending')
   const [historyScope, setHistoryScope] = useState('normal')
@@ -165,7 +167,8 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   const activeMaterials = masterItems.filter((item) => item.category === 'material' && item.enabled)
   const selectedProductMasters = allActiveProducts.filter((item) => draft.product.selectedIds.includes(item.id))
   const ordinarySelectedProducts = selectedProductMasters.filter((item) => !isPackagedTransferItem(item))
-  const canReview = picked.length > 0 && picked.every(validTransferItemQuantity)
+  const storesOperating = newStores.some((store) => store.key === fromStoreKey) && newStores.some((store) => store.key === toStoreKey)
+  const canReview = storesOperating && picked.length > 0 && picked.every(validTransferItemQuantity)
 
   useEffect(() => {
     let active = true
@@ -239,6 +242,7 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   }
 
   const openReview = () => {
+    if (!storesOperating) return setError(closedStoreMessage(newStores.some((store) => store.key === fromStoreKey) ? toStoreKey : fromStoreKey))
     if (!fromStoreKey) return setError('请选择调出门店')
     if (!toStoreKey) return setError('请选择调入门店')
     if (fromStoreKey === toStoreKey) return setError('调出门店不能与调入门店相同')
@@ -249,6 +253,7 @@ export default function StoreTransferPage({ currentUser, onBack }) {
   }
 
   const submit = async () => {
+    if (!storesOperating) return setError(closedStoreMessage(newStores.some((store) => store.key === fromStoreKey) ? toStoreKey : fromStoreKey))
     if (busy) return
     setBusy(true)
     try {
@@ -362,14 +367,14 @@ export default function StoreTransferPage({ currentUser, onBack }) {
         <p className="mb-3 text-xs font-bold uppercase tracking-[.18em] text-budu-500">1 · 门店</p>
         <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
           <label className="min-w-0 text-xs font-semibold text-slate-500">调出门店
-            <select aria-label="调出门店" value={fromStoreKey} onChange={(event) => setFromStoreKey(event.target.value)} className="input mt-1.5 w-full"><option value="">请选择</option>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
+            <select aria-label="调出门店" value={fromStoreKey} onChange={(event) => setFromStoreKey(event.target.value)} className="input mt-1.5 w-full"><option value="">请选择</option>{fromStoreKey && !newStores.some((store) => store.key === fromStoreKey) && <option value={fromStoreKey} disabled>{storeLabel(fromStoreKey)}（不可新建业务）</option>}{newStores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
           </label>
           <ArrowRight className="mb-3 h-5 w-5 text-budu-400" />
           <label className="min-w-0 text-xs font-semibold text-slate-500">调入门店
-            <select aria-label="调入门店" value={toStoreKey} onChange={(event) => setToStoreKey(event.target.value)} disabled={!transferAll && ownStoreKeys.length <= 1} className="input mt-1.5 w-full disabled:bg-slate-50 disabled:text-slate-500"><option value="">请选择</option>{(transferAll ? stores : stores.filter((store) => ownStoreKeys.includes(store.key))).map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
+            <select aria-label="调入门店" value={toStoreKey} onChange={(event) => setToStoreKey(event.target.value)} disabled={!transferAll && (ownStoreKeys.length === 0 || (ownStoreKeys.length === 1 && ownStoreKeys[0] === toStoreKey))} className="input mt-1.5 w-full disabled:bg-slate-50 disabled:text-slate-500"><option value="">请选择</option>{toStoreKey && !newStores.some((store) => store.key === toStoreKey) && <option value={toStoreKey} disabled>{storeLabel(toStoreKey)}（不可新建业务）</option>}{(transferAll ? newStores : newStores.filter((store) => ownStoreKeys.includes(store.key))).map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
           </label>
         </div>
-        {fromStoreKey && toStoreKey && fromStoreKey === toStoreKey && <p role="alert" className="mt-2 text-xs font-semibold text-rose-500">调出门店不能与调入门店相同</p>}
+        {!storesOperating && <p role="status" className="mt-2 text-xs font-semibold text-amber-700">请选择仍营业的门店；已填写货品和备注保留。</p>}{fromStoreKey && toStoreKey && fromStoreKey === toStoreKey && <p role="alert" className="mt-2 text-xs font-semibold text-rose-500">调出门店不能与调入门店相同</p>}
       </section>
 
       <section className="rounded-[24px] bg-white p-4 shadow-card">

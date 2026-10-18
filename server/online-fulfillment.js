@@ -21,9 +21,11 @@ export function createOnlineFulfillment(prisma,{authorize}={}) {
     // after the shared settlement advisory lock. Serializable would retain the
     // pre-wait snapshot and miss a rival's authorization in this separate table.
     await tx.$queryRaw`SELECT id FROM online_settlements WHERE id = ${settlement.id} FOR UPDATE`
-    const authority=await authorize(tx,{settlement,actor:input.actor,input:{...input}})
-    if(typeof authority?.actorId!=='string'||!authority.actorId.trim()||authority.actorId.length>160)throw httpError('无履约权限',403)
     const prior=await tx.onlineFulfillmentAuthorization.findUnique({where:{settlementId:settlement.id}})
+    const replay=Boolean(prior && prior.settlementId===settlement.id
+      && prior.requestKey===input.requestKey && prior.requestFingerprint===fingerprint)
+    const authority=await authorize(tx,{settlement,actor:input.actor,input:{...input},replay})
+    if(typeof authority?.actorId!=='string'||!authority.actorId.trim()||authority.actorId.length>160)throw httpError('无履约权限',403)
     if(prior){
      if(prior.requestKey!==input.requestKey || prior.requestFingerprint!==fingerprint)deny()
      // Historical authorization survives later refunds; replay never creates a

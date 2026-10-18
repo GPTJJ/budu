@@ -12,7 +12,8 @@ import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
 import { httpError } from './pos-core.js'
 import { isSuperUser, hasModuleAccess, MODULE_KEYS } from '../shared/accountPermissions.js'
-import { FIXED_STORE_KEYS, isFixedStoreKey } from '../shared/storeDirectory.js'
+import { isStoreKey } from '../shared/storeDirectory.js'
+import { assertExistingStore } from './store-operation-policy.js'
 
 export const employeeProfileRouter = Router()
 
@@ -299,6 +300,7 @@ employeeProfileRouter.put('/employees/:id/employment', wrap(async (req, res) => 
   const reason = String(b.reason || '').slice(0, 200)
   const changes = []
   if (next.currentStoreKey !== row.currentStoreKey) {
+    await assertExistingStore(prisma, next.currentStoreKey)
     changes.push('store')
     await prisma.employeeStoreHistory.create({
       data: {
@@ -424,14 +426,16 @@ employeeProfileRouter.get('/staff-list', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   // 员工名单目录对全部业务账号开放（按角色收敛范围），与旧 KV userdata 口径一致
   if (req.user.role === 'public' || req.user.role === 'cashier') throw httpError('无权限', 403)
-  const where = { status: { not: 'RESIGNED' }, currentStoreKey: { in: FIXED_STORE_KEYS } }
+  const registered = await prisma.store.findMany({ select: { key: true } })
+  const storeKeys = registered.map(store => store.key).filter(isStoreKey)
+  const where = { status: { not: 'RESIGNED' }, currentStoreKey: { in: storeKeys } }
   if (req.user.role === 'staff') {
     // 员工本人范围只认认证账号的稳定 Employee.id；缺失/无效绑定自然返回空，绝不回退姓名或 staffKey。
     const ownId = selfEmployeeId(req.user)
     if (!ownId) return res.json({ ok: true, rows: [] })
     where.id = ownId
   } else if (!isSuperUser(req.user) && req.user.role !== 'manager' && req.user.role !== 'finance') {
-    const keys = Array.isArray(req.user.storeKeys) ? req.user.storeKeys.filter(isFixedStoreKey) : []
+    const keys = Array.isArray(req.user.storeKeys) ? req.user.storeKeys.filter(key => storeKeys.includes(key)) : []
     where.currentStoreKey = { in: keys }
   }
   const rows = await prisma.employee.findMany({ where, orderBy: [{ currentStoreKey: 'asc' }, { name: 'asc' }] })
@@ -455,10 +459,10 @@ employeeProfileRouter.put('/staff-list', wrap(async (req, res) => {
     }
     for (const s of list) {
       const name = String((s && s.name) || '').trim().slice(0, 30)
-      const storeKey = String((s && s.storeKey) || '').trim().slice(0, 30)
+      const storeKey = String((s && s.storeKey) || '').trim()
       const type = (s && s.type) === 'parttime' ? 'parttime' : 'fulltime'
       if (!name || !storeKey) throw httpError('员工数据不正确')
-      if (!isFixedStoreKey(storeKey)) throw httpError('员工所属门店不在固定门店目录')
+      await assertExistingStore(tx, storeKey, { lock: true })
       const row = await tx.employee.findFirst({ where: { name, currentStoreKey: storeKey } })
       if (row) {
         await tx.employee.update({ where: { id: row.id }, data: { employmentType: type, status: 'ACTIVE' } })

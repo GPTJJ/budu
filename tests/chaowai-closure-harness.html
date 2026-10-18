@@ -1,0 +1,31 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>budu closure synthetic test</title></head><body class="bg-canvas"><div id="root"></div><script type="module">
+import React from 'react'
+import { createRoot } from 'react-dom/client'
+import PosPage from '/src/components/PosPage.jsx'
+import StoreTransferPage from '/src/components/StoreTransferPage.jsx'
+import PurchaseReceiptPage from '/src/components/PurchaseReceiptPage.jsx'
+import StoreMailingPage from '/src/components/StoreMailingPage.jsx'
+import SchedulePage from '/src/components/SchedulePage.jsx'
+import HomeWorkspace from '/src/components/HomeWorkspace.jsx'
+import StoreEntryPage from '/src/components/StoreEntryPage.jsx'
+import { seedCachedDataForTest, loadUserData } from '/src/utils/userData.js'
+import { allStores, operatingStores, aggregate } from '/src/utils/selectors.js'
+import { PublicModeProvider } from '/src/visibility.jsx'
+import { OverlayStackManager } from '/src/components/overlay/OverlayPrimitives.jsx'
+import '/src/index.css'
+const params = new URLSearchParams(location.search)
+const user={id:'synthetic-developer',username:'fixture',status:'active',role:params.get('role')||'developer',storeKeys:params.get('bound')?[params.get('bound')]:params.get('role')==='store'?['chaowai']:['tongying','guanshe','chaowai','xidan'],permissions:['store-pos','store-entry','store-schedule','inventory-transfer','inventory-purchase']}
+const stores=['tongying','guanshe','chaowai','xidan'].map(key=>({key,name:{tongying:'北京通盈中心店',guanshe:'北京官舍店',chaowai:'北京朝外店',xidan:'北京西单店'}[key],active:key!=='chaowai'||params.has('open')}))
+const fixture={stores:params.has('empty')?[]:stores,entries:{'2026-10|chaowai|10-13':{inc:5300,ord:53,staff:['合成人员']}},staff:[],inventoryRequests:[{id:'history-transfer',type:'transfer',fromStoreKey:'chaowai',storeKey:'tongying',fromStoreName:'北京朝外店',storeName:'北京通盈中心店',status:'completed',createdAt:'2026-10-13T03:00:00Z',createdBy:'合成',shippedAt:'2026-10-13T04:00:00Z',items:[]}]}
+if(!params.has('bootstrapCashier')) seedCachedDataForTest(fixture)
+const historicalOrder={id:'historical-order',orderNo:'SYNTHETIC-1',storeId:'chaowai',storeName:'北京朝外店',status:'pending_payment',paymentStatus:'unpaid',payableAmount:'1000',subtotalAmount:'1000',discountAmount:'0',sweetCardAmount:'0',items:[],payments:[{id:'old-payment',status:'pending',provider:'wechat_pay'}]}
+const product={productId:'synthetic-product',name:'合成商品',posCategory:'糖果',salePriceCents:'1000',costPriceCents:'100',unit:'件',isActive:true,sortOrder:1}
+const requests=[]
+window.fetch=async(url,options={})=>{const path=new URL(url,location.origin).pathname;const method=options.method||'GET';requests.push({path,method});const json=(data,status=200)=>Promise.resolve(new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}}));if(params.has('bootstrapCashier')&&path==='/api/v2/stores')return json({error:'permission denied'},403);if(path==='/api/userdata')return json(params.has('bootstrapCashier')?{stores:fixture.stores.filter(store=>user.storeKeys.includes(store.key)),...(params.has('noAuthority')?{}:{storesAuthority:'postgresql'})}:{});if(path==='/api/v2/stores'||path==='/api/v2/procurement/stores')return json({rows:fixture.stores});if(path==='/api/v2/pos/products')return json({rows:[product]});if(path==='/api/v2/pos/config')return json({mode:'live',mock:false,channels:['cash','wechat']});if(path==='/api/v2/pos/orders/historical-order')return json({order:historicalOrder});if(path==='/api/v2/pos/payments/old-payment/query')return json({order:historicalOrder,payment:historicalOrder.payments[0]});if(path==='/api/v2/pos/orders')return json({rows:[historicalOrder]});if(path==='/api/v2/transfer-requests')return json({rows:fixture.inventoryRequests});if(path==='/api/v2/procurement/orders')return json({rows:[{id:'old-procurement',status:'CLOSED',storeKey:'chaowai',storeNameSnapshot:'北京朝外店',supplierNameSnapshot:'合成供应商'}]});if(path==='/api/v2/stock/alerts')return json({rows:[]});if(path==='/api/v2/schedules')return json({rows:[],versions:{},emptyVersion:'synthetic'});if(path==='/api/v2/daily-entry/overview')return json({storeKey:new URL(url,location.origin).searchParams.get('store'),date:new URL(url,location.origin).searchParams.get('date'),salesDataSource:'manual',entry:null,staff:[],pos:null});if(path==='/api/v2/daily-participants')return json({employees:[],substitutes:[],schedule:{unresolved:[]}});return json({rows:[],entries:[]})}
+window.__closure={requests,reveal:async()=>{fixture.stores=stores;await loadUserData()},read:()=>({all:allStores(),operating:operatingStores(),history:aggregate('2026-10','chaowai')}),close:async()=>{stores.find(row=>row.key==='chaowai').active=false;await loadUserData()},open:async()=>{stores.find(row=>row.key==='chaowai').active=true;await loadUserData()}}
+if(params.has('bootstrapCashier')) await loadUserData({userId:user.id})
+const props={user,currentUser:user,onBack:()=>{},onExit:()=>{}}
+const page=params.get('page')||'pos'
+const Component={pos:PosPage,transfer:StoreTransferPage,purchase:PurchaseReceiptPage,mailing:StoreMailingPage,schedule:SchedulePage,entry:StoreEntryPage}[page]
+createRoot(document.getElementById('root')).render(React.createElement(PublicModeProvider,{isPublic:false,isStore:false},React.createElement(React.Fragment,null,React.createElement(OverlayStackManager),Component?React.createElement(Component,{...props,...(params.has('pending')?{initialOrder:historicalOrder}:{})}):React.createElement(HomeWorkspace,{...props,month:'2026-10',store:'all',day:params.get('day')==='month'?null:params.get('day')||'10-14',weekStart:params.get('weekStart')||null,onNavigate:()=>{},onSelectStore:()=>{}}))))
+</script></body></html>

@@ -57,6 +57,28 @@ const cases = [
     expect: { hours: 8, baseRate: 28, basePay: 224, commissionRate: 5, commission: 40, total: 264 },
   },
   {
+    name: '门店管理新身份 + 官舍名称 → 使用新店默认规则，不继承官舍补贴',
+    got: calcDailyPay({
+      storeKey: 'store-0123456789abcdef0123',
+      storeName: '官舍新门店',
+      revenue: 0,
+      date: '2026-10-18',
+      staffCount: 1,
+    }),
+    expect: { hours: 12, baseRate: 30, basePay: 360, transferSubsidyRate: 0, transferSubsidy: 0, total: 360 },
+  },
+  {
+    name: '新身份改名含通盈 → 不改变既有新店提成规则',
+    got: calcDailyPay({
+      storeKey: 'store-0123456789abcdef0123',
+      storeName: '通盈新门店',
+      revenue: 2000,
+      date: '2026-10-18',
+      staffCount: 2,
+    }),
+    expect: { hours: 8, baseRate: 28, commissionRate: 5, commission: 40, transferSubsidy: 0, total: 264 },
+  },
+  {
     name: '朝外 1 人 11.5h 未达标 → 仅基础薪资 345',
     got: calcDailyPay({ storeKey: 'chaowai', revenue: 1500, date: '2026-08-13', staffCount: 1 }),
     expect: { hours: 11.5, baseRate: 30, basePay: 345, commissionRate: 0, commission: 0, total: 345 },

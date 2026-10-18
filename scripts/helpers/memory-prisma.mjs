@@ -26,6 +26,12 @@ export function applyData(row, data) {
 
 export class MemoryPrisma {
   constructor() {
+    this.stores = [{ key: 'store-1', name: '测试门店', active: true }]
+    this.storeLocks = []
+    this.userLocks = []
+    this.users = [{ id: 'user-1', role: 'staff', status: 'active' }]
+    this.user = { findUnique: async ({ where }) => this.users.find(row => matches(row, where)) || null }
+    this.store = { findUnique: async ({ where }) => this.stores.find(row => matches(row, where)) || null }
     this.orders = [{
       id: 'order-1', orderNo: 'POS-1', storeId: 'store-1', cashierId: 'user-1', cashierNameSnapshot: '员工1',
       subtotal: 7200n, discountAmount: 0n, payableAmount: 7200n, status: 'pending_payment', paymentStatus: 'unpaid',
@@ -143,7 +149,7 @@ export class MemoryPrisma {
         if (!row) return null
         return include ? {
           ...row,
-          store: { key: row.storeId, name: '测试门店' },
+          store: this.stores.find(store => store.key === row.storeId) || { key: row.storeId, name: '测试门店' },
           items: row.items || [],
           payments: [...this.payments].filter((payment) => payment.orderId === row.id).reverse(),
           externalSettlement: this.externalSettlements.find((settlement) => settlement.orderId === row.id) || null,
@@ -159,6 +165,22 @@ export class MemoryPrisma {
         return { count: rows.length }
       },
     }
+  }
+
+  // Records locking intent only; this adapter never proves PostgreSQL locking.
+  async $queryRawUnsafe(sql, value) {
+    if (sql === 'SELECT id FROM "User" WHERE id = $1 FOR SHARE') {
+      this.userLocks.push(value)
+      const user = this.users.find(row => row.id === value)
+      return user ? [{ id: user.id }] : []
+    }
+    if (/^SELECT .* FROM \"Store\" WHERE key = \$1 FOR SHARE$/.test(sql)) {
+      this.storeLocks.push(value)
+      const row = this.stores.find(store => store.key === value)
+      return row ? [{ ...row }] : []
+    }
+    if (sql === 'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))::text AS locked') return [{ locked: '' }]
+    throw Error('MEMORY_SQL_UNSUPPORTED')
   }
 
   async $transaction(handler) { return handler(this) }

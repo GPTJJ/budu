@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowLeft, BadgePercent, Ban, Banknote, Download, FileSp
 import * as XLSX from 'xlsx'
 import { api } from '../utils/api'
 import OrderDetailSheet from './OrderDetailSheet'
-import { allStores } from '../utils/selectors'
+import useStoreDirectory from '../hooks/useStoreDirectory'
 import { centsToYuan, createCheckoutKey, formatCents } from '../utils/pos'
 import {
   hasManualExternalRefundConfirm,
@@ -65,12 +65,13 @@ function isOrderDeletable(order) {
 }
 
 export default function OrderRecordsPage({ user, onBack, onPay }) {
+  const directory = useStoreDirectory()
   const stores = useMemo(() => {
-    const list = allStores()
+    const list = directory
     if (['developer', 'finance', 'admin'].includes(user.role)) return list
     const allowed = new Set(user.storeKeys || [])
     return list.filter((store) => allowed.has(store.key))
-  }, [user])
+  }, [user, directory])
   const [from, setFrom] = useState(beijingToday)
   const [to, setTo] = useState(beijingToday)
   const [store, setStore] = useState('all')

@@ -5,7 +5,7 @@ import {
   TrendingUp, WalletCards, X,
 } from 'lucide-react'
 import { api } from '../utils/api'
-import { allStores } from '../utils/selectors'
+import useStoreDirectory from '../hooks/useStoreDirectory'
 import {
   hasModuleAccess,
   hasReportAllStores,
@@ -399,6 +399,7 @@ function ProductsReport({ data, loading, error, reload, storeMap, page, onPage, 
 }
 
 export default function ReportCenterPage({ currentUser, onBack, onNavigate }) {
+  const directory = useStoreDirectory()
   const canSales = hasReportSalesView(currentUser)
   const [tab, setTab] = useState(canSales ? 'dashboard' : 'profit')
   const [preset, setPreset] = useState('today')
@@ -421,11 +422,11 @@ export default function ReportCenterPage({ currentUser, onBack, onNavigate }) {
   const [productDetail, setProductDetail] = useState(null)
   const range = useMemo(() => reportDateRange(preset, custom), [preset, custom])
   const allowedStores = useMemo(() => {
-    const stores = allStores()
+    const stores = directory
     if (hasReportAllStores(currentUser)) return stores
     const allowed = new Set(currentUser?.storeKeys || [])
     return stores.filter((item) => allowed.has(item.key))
-  }, [currentUser])
+  }, [currentUser, directory])
   const storeMap = useMemo(() => new Map(allowedStores.map((item) => [item.key, item.name])), [allowedStores])
   const coreTab = REPORT_TABS.some((item) => item.key === tab) || tab === 'profit'
 

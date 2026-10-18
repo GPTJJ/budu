@@ -1,5 +1,6 @@
 import { isRetryableTransactionConflict } from './transaction-conflict.js'
 import crypto from 'node:crypto'
+import { assertOperatingStore } from './store-operation-policy.js'
 import { normalizeIdempotencyKey, REPLENISHMENT_ORDER_STATUSES } from './replenishment-order-service.js'
 import { MAX_PARTNER_BASE_QUANTITY } from './partner-replenishment-pricing.js'
 import { authorizeReplenishmentShipper, PARTNER_REPLENISHMENT_REVIEW_STORE_KEY } from './replenishment-review-authorization.js'
@@ -165,8 +166,7 @@ export async function createReplenishmentShipment({ db, actor, orderId, body, id
           throw shipmentError('只有待发货或部分发货订单可以创建物流批次', 'REPLENISHMENT_SHIPMENT_ORDER_STATE_INVALID', 409)
         }
 
-        const store = await tx.store.findUnique({ where: { key: normalized.fulfillmentStoreKey }, select: { key: true, name: true, active: true } })
-        if (!store?.active) throw shipmentError('发货门店不存在或已停用', 'REPLENISHMENT_SHIPMENT_STORE_INVALID', 409)
+        const store = await assertOperatingStore(tx, normalized.fulfillmentStoreKey, { lock: true })
 
         const byId = new Map(order.items.map((item) => [item.id, item]))
         const rows = normalized.items.map((input) => {
@@ -244,7 +244,7 @@ export async function listFulfillmentStores({ db, actor, now = new Date() }) {
   const authorization = await authorizeReplenishmentShipper({ db, actor, now })
   const rows = await db.store.findMany({
     where: { active: true },
-    select: { key: true, name: true },
+    select: { key: true, name: true, active: true },
     orderBy: [{ name: 'asc' }, { key: 'asc' }],
   })
   return { authorization, rows }

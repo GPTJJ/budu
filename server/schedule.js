@@ -2,6 +2,7 @@
 import { Router } from 'express'
 import crypto from 'node:crypto'
 import { prisma, dbReady } from './pg.js'
+import { assertOperatingStores } from './store-operation-policy.js'
 import { httpError } from './pos-core.js'
 import { isSuperUser } from '../shared/accountPermissions.js'
 
@@ -13,7 +14,7 @@ const wrap = (fn) => async (req, res) => {
   } catch (err) {
     const status = err.status || 500
     if (status >= 500) console.error('[schedule]', err)
-    res.status(status).json({ error: err.message || '服务器错误' })
+    res.status(status).json({ error: err.message || '服务器错误', ...(err.code === 'STORE_CLOSED' ? { code: err.code } : {}) })
   }
 }
 
@@ -105,6 +106,7 @@ export async function replaceScheduleStoresAtomic(prismaClient, { weekStart, sto
   if (requireVersions && payloads.some((row) => !row.version)) throw httpError('排班版本缺失，请刷新后重试', 409)
 
   return prismaClient.$transaction(async (tx) => {
+    await assertOperatingStores(tx, payloads.map((row) => row.storeKey), { lock: true })
     const prepared = []
     for (const payload of [...payloads].sort((left, right) => left.storeKey.localeCompare(right.storeKey))) {
       // Prisma 无法反序列化 PostgreSQL void；子查询仍执行事务级锁，外层只返回普通整数。

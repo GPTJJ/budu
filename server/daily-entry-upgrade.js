@@ -1,16 +1,16 @@
 import crypto from 'node:crypto'
 import { Router } from 'express'
 import { prisma, dbReady } from './pg.js'
+import { assertExistingStore, assertOperatingStore, readStoreStatusHistory } from './store-operation-policy.js'
+import { storeBusinessClosedOn, storeOperatedInPeriod } from '../shared/storeOperationDates.js'
 import { buildRecognizedRevenueWhere, httpError } from './pos-core.js'
 import { effectiveSource, aggregatePosDay, resolveDailyEntrySalesRows } from './daily-sales-authority.js'
-import { resolveStoreName } from './store-names.js'
 import {
   DAILY_ENTRY_CAPABILITIES,
   hasDailyEntryCapability,
   isSuperUser,
   canCorrectDailyPerformance,
 } from '../shared/accountPermissions.js'
-import { isFixedStoreKey } from '../shared/storeDirectory.js'
 import { buduBusinessDate } from '../shared/businessDate.js'
 import {
   HISTORICAL_ATTENDANCE_STATUS,
@@ -36,7 +36,7 @@ const wrap = (handler) => async (req, res) => {
   } catch (error) {
     const status = error.status || 500
     if (status >= 500) console.error('[daily-entry-upgrade]', error)
-    res.status(status).json({ error: status >= 500 ? '每日录入处理失败，请稍后重试' : (error.message || '请求处理失败') })
+    res.status(status).json({ error: status >= 500 ? '每日录入处理失败，请稍后重试' : (error.message || '请求处理失败'), ...(error.code === 'STORE_CLOSED' ? { code: error.code } : {}) })
   }
 }
 
@@ -47,10 +47,13 @@ function canStore(user, storeId) {
 }
 
 async function ensureStore(key) {
-  if (!isFixedStoreKey(key)) throw httpError('门店不存在或已停用', 400)
-  const existing = await prisma.store.findUnique({ where: { key } })
-  if (existing) return existing
-  return prisma.store.create({ data: { key, name: resolveStoreName(key), district: '' } })
+  return assertExistingStore(prisma, key)
+}
+
+function assertClosedStoreCorrection(store, user) {
+  if (store?.active === false && user?.role !== 'developer') {
+    throw httpError('已停用门店的历史修正仅开发者可办理', 403)
+  }
 }
 
 function dateOnly(value) {
@@ -361,10 +364,13 @@ dailyEntryUpgradeRouter.get('/daily-entry/completeness', wrap(async (req, res) =
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
   if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.VIEW)) throw httpError('无权限', 403)
   const d = dateOnly(dateStr)
-  const [entry, staffRows] = await Promise.all([
+  const [entry, staffRows, store] = await Promise.all([
     prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } }),
     prisma.dailyStoreStaff.findMany({ where: { storeId: storeKey, date: d } }),
+    prisma.store.findUnique({ where: { key: storeKey }, select: { key: true, active: true, createdAt: true } }),
   ])
+  const histories = await readStoreStatusHistory(prisma, [storeKey])
+  const periodStore = store ? { ...store, statusHistory: histories.get(storeKey) || [] } : null
   const employeeIds = [...new Set(staffRows.map((row) => row.employeeId).filter(Boolean))]
   const employees = employeeIds.length > 0
     ? await prisma.employee.findMany({ where: { id: { in: employeeIds } }, select: { id: true } })
@@ -373,6 +379,10 @@ dailyEntryUpgradeRouter.get('/daily-entry/completeness', wrap(async (req, res) =
     ok: true,
     storeKey,
     date: dateStr,
+    storeActive: store?.active === true,
+    businessClosedOn: storeBusinessClosedOn(periodStore),
+    // Presentation only: preserve the raw historical/payroll completeness facts.
+    dailyEntryExpected: storeOperatedInPeriod(periodStore, dateStr),
     completeness: resolveDailyEntryCompleteness({
       entry,
       staffRows,
@@ -479,6 +489,7 @@ dailyEntryUpgradeRouter.put('/store-sales-source', wrap(async (req, res) => {
   if (!storeKey || !['manual', 'pos', 'hybrid'].includes(salesDataSource)) throw httpError('门店或销售数据来源不正确')
   if (effectiveDate && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) throw httpError('生效日期格式应为 YYYY-MM-DD')
   const store = await ensureStore(storeKey)
+  assertClosedStoreCorrection(store, req.user)
   const before = {
     salesDataSource: store.salesDataSource,
     effectiveDate: isoDate(store.salesDataSourceEffectiveDate),
@@ -488,6 +499,9 @@ dailyEntryUpgradeRouter.put('/store-sales-source', wrap(async (req, res) => {
     effectiveDate: effectiveDate || '',
   }
   await prisma.$transaction(async (tx) => {
+    await tx.$queryRawUnsafe('SELECT key FROM "Store" WHERE key = $1 FOR SHARE', storeKey)
+    const currentStore = await tx.store.findUnique({ where: { key: storeKey } })
+    assertClosedStoreCorrection(currentStore, req.user)
     await tx.store.update({
       where: { key: storeKey },
       data: {
@@ -836,6 +850,7 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   const dateStr = String(req.body?.date || '').trim()
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
   if (!canStore(req.user, storeKey) || !hasDailyEntryCapability(req.user, DAILY_ENTRY_CAPABILITIES.EDIT)) throw httpError('无权限', 403)
+  await assertOperatingStore(prisma, storeKey)
   await ensureStore(storeKey)
   const d = dateOnly(dateStr)
   const existingEntry = await prisma.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
@@ -844,6 +859,7 @@ dailyEntryUpgradeRouter.put('/daily-staff', wrap(async (req, res) => {
   const parsed = await resolveDailyStaffSubmission(prisma, normalized, storeKey)
   const rows = await prisma.$transaction(async (tx) => {
     await tx.$queryRawUnsafe('SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext($1))) l', `daily-entry:${storeKey}:${dateStr}`)
+    await assertOperatingStore(tx, storeKey, { lock: true })
     const current = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
     if (current?.status === 'confirmed' || current?.id !== existingEntry?.id || current?.version !== existingEntry?.version) {
       throw httpError('记录已变化或已确认，请重新读取；历史事实需通过更正记录处理', 409)
@@ -891,8 +907,7 @@ export async function confirmDailyEntryAtomic(prismaClient, input, options = {})
       'SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext($1))) AS lock_row',
       `daily-entry:${storeKey}:${dateStr}`,
     )
-    const store = await tx.store.findUnique({ where: { key: storeKey } })
-    if (!store) throw httpError('门店不存在或已停用', 400)
+    const store = await assertOperatingStore(tx, storeKey, { lock: true })
     const d = dateOnly(dateStr)
     const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
     const currentVersion = before?.version || 0
@@ -1003,8 +1018,10 @@ export async function reviseConfirmedDailyEntryAtomic(prismaClient, input, optio
       'SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext($1))) AS lock_row',
       `daily-entry:${storeKey}:${dateStr}`,
     )
+    await tx.$queryRawUnsafe('SELECT key FROM "Store" WHERE key = $1 FOR SHARE', storeKey)
     const store = await tx.store.findUnique({ where: { key: storeKey } })
     if (!store) throw httpError('门店不存在或已停用', 400)
+    assertClosedStoreCorrection(store, actor)
     const d = dateOnly(dateStr)
     const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
     if (!before || before.status !== 'confirmed') throw httpError('只有已确认每日记录可以进入受控修正', 409)
@@ -1100,6 +1117,7 @@ dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
   if (!storeKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw httpError('参数不正确')
   if (!canStore(req.user, storeKey)) throw httpError('无权限', 403)
   const store = await ensureStore(storeKey)
+  assertClosedStoreCorrection(store, req.user)
   if (effectiveSource(store, dateStr) !== 'hybrid') throw httpError('仅混合模式门店可调整营业数据', 409)
   const expectedVersion = Number(req.body?.version)
   if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw httpError('数据版本缺失，请刷新后重新核对', 409)
@@ -1114,6 +1132,9 @@ dailyEntryUpgradeRouter.post('/daily-entry/adjust', wrap(async (req, res) => {
       'SELECT 1 AS locked FROM (SELECT pg_advisory_xact_lock(hashtext($1))) AS lock_row',
       `daily-entry:${storeKey}:${dateStr}`,
     )
+    await tx.$queryRawUnsafe('SELECT key FROM "Store" WHERE key = $1 FOR SHARE', storeKey)
+    const currentStore = await tx.store.findUnique({ where: { key: storeKey } })
+    assertClosedStoreCorrection(currentStore, req.user)
     const before = await tx.dailyEntry.findUnique({ where: { storeKey_date: { storeKey, date: d } } })
     if (!before) throw httpError('每日记录不存在，请先完成当日确认', 409)
     if (before.salesDataStatus === 'corrected') throw httpError('请通过更正记录入口继续修改', 409)

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../utils/api';
+import { getStores, getUserData, onUserDataUpdated } from '../utils/userData';
+import { isStoreDirectoryRows } from '../utils/storeDirectory';
+import { closedStoreMessage } from '../utils/selectors';
 import { canManageProcurement, isProcurementDeveloper } from '../../shared/accountPermissions';
 import { exportPurchaseImage } from '../utils/purchaseReceiptExport';
 import { takeNotificationRecordFocus } from '../utils/notificationNavigation';
@@ -53,16 +56,40 @@ export default function PurchaseReceiptPage({
   const saveKey = useRef(''),
     receiptKey = useRef(''),
     supplierKey = useRef('');
+  const storeReadSequence = useRef(0);
+  const newStores = stores.filter(store => store.active === true);
+  const storeOperating = key => newStores.some(store => store.key === key);
+  const readStores = async () => {
+    const sequence = ++storeReadSequence.current;
+    try {
+      const result = await api('/v2/procurement/stores');
+      if (sequence !== storeReadSequence.current) return;
+      if (!isStoreDirectoryRows(result?.rows)) throw new Error('门店状态读取失败，请刷新后重试');
+      setStores(result.rows);
+    } catch (nextError) {
+      if (sequence === storeReadSequence.current) setStores(current => current.map(store => ({ ...store, active: undefined })));
+      throw nextError;
+    }
+  };
   const load = async () => {
-    const [o, s] = await Promise.all([api('/v2/procurement/orders'), api('/v2/procurement/stores')]);
+    const [o] = await Promise.all([api('/v2/procurement/orders'), readStores()]);
     setOrders(o.rows);
-    setStores(s.rows);
     if (manage) {
       const [sp, p] = await Promise.all([api('/v2/procurement/suppliers'), api('/v2/procurement/items')]);
       setSuppliers(sp.rows);
       setProducts(p.rows);
     }
   };
+  useEffect(() => {
+    let snapshot = JSON.stringify([getStores(), getUserData().storesAuthority]);
+    const unsubscribe = onUserDataUpdated(() => {
+      const next = JSON.stringify([getStores(), getUserData().storesAuthority]);
+      if (next === snapshot) return;
+      snapshot = next;
+      readStores().catch(nextError => setError(nextError.message));
+    });
+    return () => { unsubscribe(); storeReadSequence.current += 1; };
+  }, [currentUser.id]);
   const openDetail = async id => {
     const d = await api('/v2/procurement/orders/' + id);
     setDetail(d.order);
@@ -113,6 +140,7 @@ export default function PurchaseReceiptPage({
     if (id) await openDetail(id);
   };
   const saveDraft = () => run(async () => {
+    if (!storeOperating(draft.content.storeKey)) throw new Error(closedStoreMessage(draft.content.storeKey));
     if (staleDraftItems.some(x => String(x.quantity ?? '').trim() !== '')) throw new Error('请先移除已不再可采购的商品');
     const content = {
       ...draft.content,
@@ -189,6 +217,7 @@ export default function PurchaseReceiptPage({
     await refresh(detail.id);
   });
   const startReceipt = r => {
+    if (!storeOperating(detail.storeKey)) return setError(closedStoreMessage(detail.storeKey));
     receiptKey.current = requestKey();
     setReceipt(r ? {
       ...r,
@@ -213,6 +242,7 @@ export default function PurchaseReceiptPage({
     }] : r.items.filter(x => x.orderLineId !== lineId)
   }));
   const submitReceipt = () => run(async () => {
+    if (!storeOperating(detail.storeKey)) throw new Error(closedStoreMessage(detail.storeKey));
     const d = await api(receipt.id ? '/v2/procurement/receipts/' + receipt.id + '/resubmit' : '/v2/procurement/orders/' + detail.id + '/receipts', {
       method: 'POST',
       body: JSON.stringify({
@@ -270,7 +300,7 @@ export default function PurchaseReceiptPage({
  {tab === 'suppliers' && <section className="space-y-3"><button className={primary} onClick={() => editSupplier()}>新建采购供应商</button>{suppliers.map(s => <article key={s.id} className="rounded-2xl border bg-white p-4"><p className="break-words font-bold">{s.name}</p><p className="mt-2 text-sm">{s.products.map(x => x.name).join('、') || '尚未绑定商品'}</p><button className={btn + ' mt-3'} onClick={() => editSupplier(s)}>维护供应商</button></article>)}</section>}
  {tab === 'orders' && !detail && <><div className="flex flex-wrap gap-2">{manage && <button className={primary} onClick={() => editDraft()}>新建备单</button>}<select aria-label="筛选门店" className={input + ' !w-auto'} value={storeFilter} onChange={e => setStoreFilter(e.target.value)}><option value="">授权门店</option>{stores.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</select><select aria-label="筛选状态" className={input + ' !w-auto'} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="">全部状态</option>{Object.entries(labels).slice(0, 5).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>{list.map(o => <button key={o.id} onClick={() => run(() => openDetail(o.id))} className="block w-full rounded-2xl border border-slate-100 bg-white p-4 text-left"><p className="break-words font-bold">{o.supplierNameSnapshot || '未选供应商'}</p><p className="mt-2 text-sm">{o.storeNameSnapshot || '未选门店'} · {labels[o.status]}</p></button>)}</>}
  {detail && tab === 'orders' && <section className="space-y-4">
- <button className={btn} onClick={() => setDetail(null)}>返回采购单列表</button><article className="rounded-2xl border bg-white p-4"><p className="break-words text-lg font-bold">{detail.supplierNameSnapshot || '未选供应商'}</p><p className="mt-2">{detail.storeNameSnapshot || '未选门店'} · <span data-testid="order-state">{labels[detail.status]}</span></p><h3 className="mt-4 font-bold">原要货清单</h3>{(detail.status === 'DRAFT' ? detail.draftContent.items || [] : detail.lines).map((l, i) => <div key={l.id || i} className="mt-3 rounded-xl bg-slate-50 p-3"><p className="break-words font-semibold">{l.productNameSnapshot}</p><p className="mt-1">要货 {l.orderedQty || l.quantity || '未填'} {l.unitSnapshot || l.unit}</p>{l.id && <p className="mt-1 text-sm" data-testid="approved-total">累计已核准 {detail.approved.find(x => x.orderLineId === l.id)?.quantity || '0'} {l.unitSnapshot} · 待核准 {detail.pending.find(x => x.orderLineId === l.id)?.quantity || '0'} {l.unitSnapshot}</p>}</div>)}<div className="mt-4 flex flex-wrap gap-2">{manage && <button className={btn} disabled={busy} onClick={exportImage}>导出采购图片</button>}{manage && !detail.receipts.length && ['DRAFT', 'ORDERED'].includes(detail.status) && <><button className={btn} onClick={() => editDraft(detail)}>修改要货清单</button><button className={btn} disabled={busy} onClick={() => orderAction('cancel')}>取消采购单</button></>}{manage && detail.status === 'DRAFT' && <button className={primary} disabled={busy} onClick={() => orderAction('mark-ordered')}>标记已下单</button>}{['ORDERED', 'RECEIVING'].includes(detail.status) && <button className={primary} disabled={busy} onClick={() => startReceipt()}>登记收货</button>}{dev && ['ORDERED', 'RECEIVING'].includes(detail.status) && <button className={btn} disabled={busy} onClick={() => orderAction('close')}>手动结束收货</button>}{dev && detail.status === 'CLOSED' && <button className={primary} onClick={() => {
+ <button className={btn} onClick={() => setDetail(null)}>返回采购单列表</button><article className="rounded-2xl border bg-white p-4"><p className="break-words text-lg font-bold">{detail.supplierNameSnapshot || '未选供应商'}</p><p className="mt-2">{detail.storeNameSnapshot || '未选门店'} · <span data-testid="order-state">{labels[detail.status]}</span></p><h3 className="mt-4 font-bold">原要货清单</h3>{(detail.status === 'DRAFT' ? detail.draftContent.items || [] : detail.lines).map((l, i) => <div key={l.id || i} className="mt-3 rounded-xl bg-slate-50 p-3"><p className="break-words font-semibold">{l.productNameSnapshot}</p><p className="mt-1">要货 {l.orderedQty || l.quantity || '未填'} {l.unitSnapshot || l.unit}</p>{l.id && <p className="mt-1 text-sm" data-testid="approved-total">累计已核准 {detail.approved.find(x => x.orderLineId === l.id)?.quantity || '0'} {l.unitSnapshot} · 待核准 {detail.pending.find(x => x.orderLineId === l.id)?.quantity || '0'} {l.unitSnapshot}</p>}</div>)}<div className="mt-4 flex flex-wrap gap-2">{manage && <button className={btn} disabled={busy} onClick={exportImage}>导出采购图片</button>}{manage && !detail.receipts.length && ['DRAFT', 'ORDERED'].includes(detail.status) && <><button className={btn} onClick={() => editDraft(detail)}>修改要货清单</button><button className={btn} disabled={busy} onClick={() => orderAction('cancel')}>取消采购单</button></>}{manage && detail.status === 'DRAFT' && <button className={primary} disabled={busy} onClick={() => orderAction('mark-ordered')}>标记已下单</button>}{['ORDERED', 'RECEIVING'].includes(detail.status) && <button className={primary} disabled={busy || !storeOperating(detail.storeKey)} onClick={() => startReceipt()}>登记收货</button>}{dev && ['ORDERED', 'RECEIVING'].includes(detail.status) && <button className={btn} disabled={busy} onClick={() => orderAction('close')}>手动结束收货</button>}{dev && detail.status === 'CLOSED' && <button className={primary} onClick={() => {
             setReason('');
             setAction({
               name: 'reopen',
@@ -333,7 +363,7 @@ export default function PurchaseReceiptPage({
               ...d.content,
               storeKey: e.target.value
             }
-          }))}><option value="">请选择</option>{stores.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>{!draft.content.supplierId && <p className="text-sm text-slate-500">请选择采购供应商</p>}{draft.content.supplierId && !draftProducts.length && <p className="text-sm text-slate-500">该供应商暂无可采购商品</p>}{draftProducts.map((p, i) => {
+          }))}><option value="">请选择</option>{draft.content.storeKey && !storeOperating(draft.content.storeKey) && <option value={draft.content.storeKey} disabled>{stores.find(s => s.key === draft.content.storeKey)?.name || draft.content.storeKey}（不可新建业务）</option>}{newStores.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</select></label>{!draft.content.supplierId && <p className="text-sm text-slate-500">请选择采购供应商</p>}{draft.content.supplierId && !draftProducts.length && <p className="text-sm text-slate-500">该供应商暂无可采购商品</p>}{draftProducts.map((p, i) => {
           const l = draft.content.items.find(x => x.itemId === p.id);
           return <div key={p.id} className={'min-w-0 rounded-xl p-3 ' + (p.stale ? 'border border-rose-200 bg-rose-50' : 'bg-slate-50')}><p className="break-words font-semibold">{p.name}</p>{p.stale && <p className="mt-1 text-sm font-semibold text-rose-700">已不再可采购</p>}<div className="mt-2 grid grid-cols-2 gap-2"><input aria-label={'要货数量' + (i + 1)} className={input} inputMode="decimal" value={l?.quantity ?? ''} onChange={e => changeDraftProduct(p.id, 'quantity', e.target.value)} placeholder="数量" /><input aria-label={'要货单位' + (i + 1)} className={input} value={l?.unit ?? ''} onChange={e => changeDraftProduct(p.id, 'unit', e.target.value)} placeholder="单位" /></div>{p.stale && <button className={btn + ' mt-2 !text-rose-700'} onClick={() => setDraft(d => ({
             ...d,
@@ -342,7 +372,7 @@ export default function PurchaseReceiptPage({
               items: d.content.items.filter(x => x.itemId !== p.id)
             }
           }))}>从本次采购移除</button>}</div>;
-        })}<button className={primary + ' w-full'} disabled={busy} onClick={saveDraft}>保存备单</button></div></Sheet>}
+        })}<button className={primary + ' w-full'} disabled={busy || !storeOperating(draft.content.storeKey)} onClick={saveDraft}>保存备单</button></div></Sheet>}
  {supplier && <Sheet error={error} title="采购供应商维护" onClose={() => setSupplier(null)}><input aria-label="供应商名称" className={input} value={supplier.name} onChange={e => setSupplier(s => ({
         ...s,
         name: e.target.value
@@ -355,7 +385,7 @@ export default function PurchaseReceiptPage({
     }}><label className="block">实际收货日期<input type="date" aria-label="实际收货日期" className={input} value={receipt.receivedDate} onChange={e => setReceipt(r => ({
           ...r,
           receivedDate: e.target.value
-        }))} /></label><p className="my-3 text-sm text-slate-500">只填写本次实际到货；未到商品留空。单位沿用原清单。</p>{detail.lines.map((l, i) => <label key={l.id} className="mb-3 block rounded-xl bg-slate-50 p-3"><span className="block break-words">{l.productNameSnapshot} · {l.unitSnapshot}</span><input aria-label={'本次实收' + (i + 1)} className={input + ' mt-2'} inputMode="decimal" value={receipt.items.find(x => x.orderLineId === l.id)?.quantity || ''} onChange={e => received(l.id, e.target.value)} /></label>)}<button className={primary + ' w-full'} disabled={busy} onClick={submitReceipt}>提交本次收货</button></Sheet>}
+        }))} /></label><p className="my-3 text-sm text-slate-500">只填写本次实际到货；未到商品留空。单位沿用原清单。</p>{detail.lines.map((l, i) => <label key={l.id} className="mb-3 block rounded-xl bg-slate-50 p-3"><span className="block break-words">{l.productNameSnapshot} · {l.unitSnapshot}</span><input aria-label={'本次实收' + (i + 1)} className={input + ' mt-2'} inputMode="decimal" value={receipt.items.find(x => x.orderLineId === l.id)?.quantity || ''} onChange={e => received(l.id, e.target.value)} /></label>)}<button className={primary + ' w-full'} disabled={busy || !storeOperating(detail.storeKey)} onClick={submitReceipt}>提交本次收货</button></Sheet>}
  {action && <Sheet error={error} title={action.title} onClose={() => setAction(null)}><textarea aria-label="操作原因" className={input} value={reason} onChange={e => setReason(e.target.value)} placeholder="填写原因" /><button className={primary + ' mt-3 w-full'} disabled={busy || !reason.trim()} onClick={() => action.r ? receiptAction(action.r, action.name, reason) : orderAction(action.name, reason)}>确认操作</button></Sheet>}
  {preview && <Sheet error={error} title="采购图片预览" onClose={() => setPreview('')}><p className="mb-3 text-sm">可长按保存图片，再自行微信分享。</p><img data-testid="purchase-image-preview" alt="采购清单图片" src={preview} className="h-auto w-full" /></Sheet>}
  </main>;

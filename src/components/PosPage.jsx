@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Banknote, Check, ChevronDown, Gift, Minus, Package, Plus, ReceiptText, Search, ShoppingCart, Trash2, WalletCards, X } from 'lucide-react'
 import { api } from '../utils/api'
 import LazyImage from './LazyImage'
-import { allStores } from '../utils/selectors'
+import { allStores, isOperatingStore, closedStoreMessage } from '../utils/selectors'
+import useOperatingStores from '../hooks/useOperatingStores'
 import { loadUserData } from '../utils/userData'
 import CameraScanner from './CameraScanner'
 import { isValidAlipayAuthCode, isValidWechatAuthCode } from '../utils/cameraScanner'
@@ -47,17 +48,17 @@ function parseDiscountPercent(value) {
   return Math.max(1, Math.min(100, Math.round(num * 10)))
 }
 
-function allowedStores(user) {
-  const stores = allStores()
+function allowedStores(user, stores) {
   if (user.role === 'developer' || user.role === 'finance' || user.role === 'admin') return stores
   const allowed = new Set(user.storeKeys || [])
   return stores.filter((store) => allowed.has(store.key))
 }
 
 export default function PosPage({ user, onExit, scannerDecoderFactory, initialOrder = null }) {
-  const stores = useMemo(() => allowedStores(user), [user])
+  const stores = allowedStores(user, useOperatingStores())
   const [storeId, setStoreId] = useState(() => {
-    if (initialOrder?.storeId && stores.some((store) => store.key === initialOrder.storeId)) return initialOrder.storeId
+    // 旧待付单仍按保存归属打开查看/查单，不能把它改挂到新的营业门店。
+    if (initialOrder?.storeId && allowedStores(user, allStores()).some((store) => store.key === initialOrder.storeId)) return initialOrder.storeId
     const saved = getSelectedPosStore(user.id)
     return stores.some((store) => store.key === saved) ? saved : stores[0]?.key || ''
   })
@@ -108,6 +109,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   const canCreateExternalOrder = hasExternalOrderCreate(user)
   const canConfirmExternalSettlement = hasExternalSettlementConfirm(user)
   const canCompletePlatformOrder = canCreateExternalOrder && canConfirmExternalSettlement
+  const storeOperating = stores.some((store) => store.key === storeId)
+  const paymentStoreOperating = isOperatingStore(order?.storeId || storeId)
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 1024px)')
@@ -450,6 +453,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   )
 
   const checkout = async () => {
+    if (!storeOperating) return setError(closedStoreMessage(storeId))
     if (!storeId || cartLines.length === 0 || submitting) return
     setSubmitting(true)
     setError('')
@@ -488,6 +492,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   }
 
   const openPlatformCheckout = () => {
+    if (!storeOperating) return setError(closedStoreMessage(storeId))
     if (!cartCount || cartTotal <= 0n || submitting || !canCreateExternalOrder) return
     setCartOpen(false)
     setError('')
@@ -501,6 +506,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   }
 
   const checkoutExternalOrder = async () => {
+    if (!storeOperating) return setError(closedStoreMessage(storeId))
     if (!storeId || cartLines.length === 0 || cartTotal <= 0n || submitting || !canCompletePlatformOrder || !platformCheckout?.source) return
     setSubmitting(true)
     setError('')
@@ -540,6 +546,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   }
 
   const completePayment = async (paymentMethod, authCode = '') => {
+    if (!paymentStoreOperating) return setError(closedStoreMessage(order?.storeId || storeId, true))
     if (!order || paying) return
     if (['wechat', 'alipay'].includes(paymentMethod) && !authCode) {
       setError('请先扫描顾客付款码')
@@ -581,6 +588,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   }
 
   const startPayment = (paymentMethod) => {
+    if (!paymentStoreOperating) return setError(closedStoreMessage(order?.storeId || storeId, true))
     if (paying) return
     setError('')
     if (paymentMethod === 'cash') setCashConfirm(true)
@@ -588,6 +596,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   }
 
   const acceptScannedCode = (authCode) => {
+    if (!paymentStoreOperating) return setError(closedStoreMessage(order?.storeId || storeId, true))
     const paymentMethod = scannerChannel
     setScannerChannel('')
     if (!paymentMethod) return
@@ -615,6 +624,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
   }
 
   const confirmSweetCard = async () => {
+    if (!paymentStoreOperating) return setError(closedStoreMessage(order?.storeId || storeId, true))
     if (!order || !sweetCardPreview || !sweetCardToken || paying) return
     setPaying('sweet-card'); setError('')
     try {
@@ -788,8 +798,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
     },
   })
 
-  if (stores.length === 0) {
-    return <div className="grid min-h-[100dvh] place-items-center bg-slate-100 p-6"><div className="max-w-sm rounded-3xl bg-white p-8 text-center shadow-xl"><Package className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-4 text-lg font-bold text-slate-800">没有可用门店</h2><p className="mt-2 text-sm text-slate-400">请先让开发者为账号绑定门店。</p><button onClick={handleExit} className="mt-6 rounded-xl bg-budu-500 px-5 py-2.5 text-sm font-semibold text-white">返回系统</button></div></div>
+  if (stores.length === 0 && !order && !showOrders) {
+    return <div className="grid min-h-[100dvh] place-items-center bg-slate-100 p-6"><div className="max-w-sm rounded-3xl bg-white p-8 text-center shadow-xl"><Package className="mx-auto h-10 w-10 text-slate-300" /><h2 className="mt-4 text-lg font-bold text-slate-800">没有可经营门店</h2><p className="mt-2 text-sm text-slate-400">暂无已核实的营业门店，不能新建订单。已有订单和本地草稿保留。</p><button onClick={() => setShowOrders(true)} className="mt-4 rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700">查看历史订单</button><button onClick={handleExit} className="mt-3 rounded-xl bg-budu-500 px-5 py-2.5 text-sm font-semibold text-white">返回系统</button></div></div>
   }
 
   if (showOrders) {
@@ -814,7 +824,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
       return (
         <button
           key={channel}
-          disabled={Boolean(paying) || !enabled || Boolean(pendingPayment)}
+          disabled={!paymentStoreOperating || Boolean(paying) || !enabled || Boolean(pendingPayment)}
           onClick={() => startPayment(channel)}
           className={`rounded-2xl border px-3 py-6 font-bold disabled:opacity-40 ${colorClass}`}
         >
@@ -829,7 +839,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
           <div className="w-full max-w-2xl rounded-[32px] bg-white p-8 shadow-2xl">
             <button onClick={returnToOrdering} className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-700"><ArrowLeft className="h-4 w-4" />返回点单</button>
             <div className="mt-8 text-center"><p className="text-sm font-semibold text-slate-400">{mockMode ? '扫码模拟支付 · 不调用真实支付接口' : (channels.length === 1 && channels.includes('cash') ? '现金收款 · 当面确认后完成订单' : '请选择支付方式')}</p><h2 className="mt-3 text-2xl font-bold text-slate-900">{BigInt(order.sweetCardAmount || 0) > 0n ? '剩余应付' : '应付金额'}</h2><p className="mt-4 text-5xl font-black tracking-tight text-budu-600">{formatCents(remainingPayable)}</p>{BigInt(order.sweetCardAmount || 0) > 0n && <p className="mt-2 text-sm font-semibold text-emerald-600">甜意卡已抵扣 {formatCents(order.sweetCardAmount)}</p>}<p className="mt-3 text-xs text-slate-400">订单号 {order.orderNo}</p></div>
-            {offer.paymentNotice && <div role="status" className="mt-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">{offer.paymentNotice}</div>}
+            {!paymentStoreOperating && <p role="status" className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{closedStoreMessage(order.storeId, true)}</p>}{offer.paymentNotice && <div role="status" className="mt-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">{offer.paymentNotice}</div>}
             {error && <div className="mt-6 rounded-xl bg-rose-50 px-4 py-3 text-center text-sm text-rose-600">{error}</div>}
             {pendingPayment && (
               <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-700">
@@ -854,7 +864,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             )}
             <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 sm:gap-4">
               {posConfig?.sweetCard?.enabled === false && <p className="col-span-full text-sm text-slate-500">{posConfig.sweetCard.reason || '当前门店暂未开启甜意卡'}</p>}
-              {posConfig?.sweetCard?.enabled === true && <button disabled={Boolean(paying) || Boolean(pendingPayment) || BigInt(order.sweetCardAmount || 0) > 0n} onClick={() => setScannerChannel('sweet-card')} className="rounded-2xl border border-budu-200 bg-budu-50 px-3 py-6 font-bold text-budu-700 disabled:opacity-40"><Gift className="mx-auto mb-3 h-8 w-8" />甜意卡</button>}
+              {posConfig?.sweetCard?.enabled === true && <button disabled={!paymentStoreOperating || Boolean(paying) || Boolean(pendingPayment) || BigInt(order.sweetCardAmount || 0) > 0n} onClick={() => setScannerChannel('sweet-card')} className="rounded-2xl border border-budu-200 bg-budu-50 px-3 py-6 font-bold text-budu-700 disabled:opacity-40"><Gift className="mx-auto mb-3 h-8 w-8" />甜意卡</button>}
               {channelButton('wechat', '微信扫码', <WalletCards className="mx-auto mb-3 h-8 w-8" />, 'border-emerald-200 bg-emerald-50 text-emerald-700')}
               {channelButton('alipay', '支付宝扫码', <WalletCards className="mx-auto mb-3 h-8 w-8" />, 'border-sky-200 bg-sky-50 text-sky-700')}
               {channelButton('cash', '现金收款', <Banknote className="mx-auto mb-3 h-8 w-8" />, 'border-amber-200 bg-amber-50 text-amber-700')}
@@ -871,7 +881,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
               <p className="mt-2 text-xs text-slate-400">订单号 {order.orderNo}</p>
               <div className="mt-6 grid grid-cols-2 gap-3">
                 <button onClick={() => setCashConfirm(false)} className="rounded-xl border border-slate-200 py-3 text-sm font-bold text-slate-500">取消</button>
-                <button disabled={Boolean(paying)} onClick={() => { setCashConfirm(false); completePayment('cash') }} className="rounded-xl bg-budu-500 py-3 text-sm font-bold text-white disabled:opacity-50">{paying === 'cash' ? '确认中…' : '确认收款'}</button>
+                <button disabled={!paymentStoreOperating || Boolean(paying)} onClick={() => { setCashConfirm(false); completePayment('cash') }} className="rounded-xl bg-budu-500 py-3 text-sm font-bold text-white disabled:opacity-50">{paying === 'cash' ? '确认中…' : '确认收款'}</button>
               </div>
             </div>
           </div>
@@ -915,7 +925,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索商品名称 / SKU / 条码" className={`w-full py-2.5 pl-10 pr-4 text-sm outline-none ring-budu-200 focus:ring-2 ${isDesktop ? 'rounded-lg border border-white/10 bg-white/10 text-white placeholder:text-slate-400' : 'rounded-xl bg-slate-100 text-slate-800'}`} />
         </label>
         <label className="relative shrink-0">
-          <select value={storeId} onChange={(e) => { offer.resetDraft(); setStoreId(e.target.value) }} className={`h-10 max-w-[170px] appearance-none pl-3 pr-8 text-sm font-semibold outline-none ${isDesktop ? 'rounded-lg border border-white/10 bg-slate-800 text-white' : 'rounded-xl border border-slate-200 bg-white text-slate-700'}`} disabled={stores.length === 1}>{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
+          <select value={storeId} onChange={(e) => { offer.resetDraft(); setStoreId(e.target.value) }} className={`h-10 max-w-[170px] appearance-none pl-3 pr-8 text-sm font-semibold outline-none ${isDesktop ? 'rounded-lg border border-white/10 bg-slate-800 text-white' : 'rounded-xl border border-slate-200 bg-white text-slate-700'}`} aria-label="POS 门店" disabled={stores.length === 0 || (stores.length === 1 && storeOperating)}>{!storeOperating && <option value={storeId} disabled>{storeId ? `${allStores().find((row) => row.key === storeId)?.name || storeId}（不可新建业务）` : "暂无可经营门店"}</option>}{stores.map((store) => <option key={store.key} value={store.key}>{store.name}</option>)}</select>
           <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         </label>
         <button onClick={() => setShowOrders(true)} className={`flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs font-semibold transition ${isDesktop ? 'rounded-lg bg-white/10 text-slate-100 hover:bg-white/20' : 'rounded-xl border border-slate-200 bg-white text-slate-600 hover:border-budu-300 hover:text-budu-600'}`} aria-label="订单记录">
@@ -924,13 +934,14 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
         </button>
       </header>
 
+      {!storeOperating && <p role="status" className="shrink-0 bg-amber-50 px-4 py-2 text-sm text-amber-800">{closedStoreMessage(storeId)} 当前草稿保留。</p>}
       <div className="flex min-h-0 flex-1">
         {isDesktop && <aside data-testid="pos-cart-panel" className="flex min-h-0 w-[40%] min-w-[390px] max-w-[500px] shrink-0 flex-col border-r border-slate-200 bg-white shadow-[4px_0_18px_rgba(15,23,42,0.04)]">
           <div className="flex h-14 shrink-0 items-center border-b border-slate-100 px-4">
             <ShoppingCart className="h-5 w-5 text-budu-600" />
             <h2 className="ml-2 text-base font-black text-slate-800">当前订单</h2>
             <span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount} 件</span>
-            <button onClick={offer.view ? offer.close : offer.open} disabled={offer.busy || submitting} className="ml-auto min-h-10 rounded-lg px-2 text-xs font-bold text-budu-600 disabled:opacity-40">{offer.view ? '当前订单' : '优惠试算'}</button>
+            <button onClick={offer.view ? offer.close : offer.open} disabled={!storeOperating || offer.busy || submitting} className="ml-auto min-h-10 rounded-lg px-2 text-xs font-bold text-budu-600 disabled:opacity-40">{offer.view ? '当前订单' : '优惠试算'}</button>
             <button onClick={clearCart} disabled={!cartCount} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-400 transition hover:bg-rose-50 hover:text-rose-500 disabled:opacity-30">清空</button>
           </div>
           {offer.view ? <div className="min-h-0 flex-1 overflow-y-auto"><PosOfferPanel offer={offer} /></div> : <>
@@ -948,8 +959,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
               <div className="text-right"><p className="text-[11px] font-semibold text-slate-400">应收金额</p><p className="text-2xl font-black tracking-tight text-budu-600">{formatCents(cartTotal)}</p></div>
             </div>
             <div className={`mt-3 grid gap-2 ${canCreateExternalOrder ? 'grid-cols-2' : 'grid-cols-1'}`}>
-              <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="rounded-xl bg-budu-500 py-3 text-sm font-black text-white shadow-lg shadow-budu-100 transition hover:bg-budu-600 active:scale-[0.99] disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建…' : '结算'}</button>
-              {canCreateExternalOrder && <button onClick={openPlatformCheckout} disabled={!cartCount || submitting || cartTotal <= 0n || !canConfirmExternalSettlement} className="rounded-xl border border-violet-200 bg-violet-50 py-3 text-sm font-black text-violet-700 transition hover:bg-violet-100 active:scale-[0.99] disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400" title={canConfirmExternalSettlement ? '记录已在平台付款的订单' : '需要外部结算确认权限'}>平台订单</button>}
+              <button onClick={checkout} disabled={!storeOperating || !cartCount || submitting || cartTotal <= 0n} className="rounded-xl bg-budu-500 py-3 text-sm font-black text-white shadow-lg shadow-budu-100 transition hover:bg-budu-600 active:scale-[0.99] disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建…' : '结算'}</button>
+              {canCreateExternalOrder && <button onClick={openPlatformCheckout} disabled={!storeOperating || !cartCount || submitting || cartTotal <= 0n || !canConfirmExternalSettlement} className="rounded-xl border border-violet-200 bg-violet-50 py-3 text-sm font-black text-violet-700 transition hover:bg-violet-100 active:scale-[0.99] disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400" title={canConfirmExternalSettlement ? '记录已在平台付款的订单' : '需要外部结算确认权限'}>平台订单</button>}
             </div>
           </div>
           </>}
@@ -1044,8 +1055,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             <p className="truncate text-base font-black text-slate-900">{formatCents(cartTotal)}</p>
           </div>
           <div className="flex shrink-0 gap-2">
-            {canCreateExternalOrder && <button onClick={openPlatformCheckout} disabled={!cartCount || submitting || cartTotal <= 0n || !canConfirmExternalSettlement} className="min-h-11 rounded-xl border border-violet-200 bg-violet-50 px-3 text-xs font-bold text-violet-700 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400" title={canConfirmExternalSettlement ? '记录已在平台付款的订单' : '需要外部结算确认权限'}>平台订单</button>}
-            <button onClick={checkout} disabled={!cartCount || submitting || cartTotal <= 0n} className="min-h-11 rounded-xl bg-budu-500 px-4 text-xs font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '创建中…' : '结算'}</button>
+            {canCreateExternalOrder && <button onClick={openPlatformCheckout} disabled={!storeOperating || !cartCount || submitting || cartTotal <= 0n || !canConfirmExternalSettlement} className="min-h-11 rounded-xl border border-violet-200 bg-violet-50 px-3 text-xs font-bold text-violet-700 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400" title={canConfirmExternalSettlement ? '记录已在平台付款的订单' : '需要外部结算确认权限'}>平台订单</button>}
+            <button onClick={checkout} disabled={!storeOperating || !cartCount || submitting || cartTotal <= 0n} className="min-h-11 rounded-xl bg-budu-500 px-4 text-xs font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '创建中…' : '结算'}</button>
           </div>
         </div>
       </div>}
@@ -1058,7 +1069,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
               <ShoppingCart className="h-5 w-5 text-budu-600" />
               <h2 className="ml-2 font-bold">当前订单</h2>
               <span className="ml-2 rounded-full bg-budu-50 px-2 py-0.5 text-xs font-bold text-budu-600">{cartCount}</span>
-              <button onClick={offer.view ? offer.close : offer.open} disabled={offer.busy || submitting} className="ml-auto min-h-10 rounded-lg px-2 text-xs font-bold text-budu-600 disabled:opacity-40">{offer.view ? '当前订单' : '优惠试算'}</button>
+              <button onClick={offer.view ? offer.close : offer.open} disabled={!storeOperating || offer.busy || submitting} className="ml-auto min-h-10 rounded-lg px-2 text-xs font-bold text-budu-600 disabled:opacity-40">{offer.view ? '当前订单' : '优惠试算'}</button>
               <button onClick={closeCartPanel} className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-slate-100" aria-label={offer.view ? '返回当前订单' : '关闭'}><X className="h-5 w-5" /></button>
             </div>
             {offer.view ? <div className="min-h-0 flex-1 overflow-y-auto"><PosOfferPanel offer={offer} /></div> : <>
@@ -1073,8 +1084,8 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
                 <div className="text-right"><button onClick={clearCart} disabled={!cartCount} className="text-xs font-semibold text-slate-400 hover:text-rose-500 disabled:opacity-30">清空</button>{cartDiscountAmount > 0n && <p className="mt-1 text-xs font-semibold text-rose-500">优惠 -{formatCents(cartDiscountAmount)}</p>}</div>
               </div>
               <div className={`grid gap-2 ${canCreateExternalOrder ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                <button onClick={() => { setCartOpen(false); checkout() }} disabled={!cartCount || submitting || cartTotal <= 0n} className="rounded-xl bg-budu-500 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建…' : '结算'}</button>
-                {canCreateExternalOrder && <button onClick={openPlatformCheckout} disabled={!cartCount || submitting || cartTotal <= 0n || !canConfirmExternalSettlement} className="rounded-xl border border-violet-200 bg-violet-50 py-3 text-sm font-bold text-violet-700 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400">平台订单</button>}
+                <button onClick={() => { setCartOpen(false); checkout() }} disabled={!storeOperating || !cartCount || submitting || cartTotal <= 0n} className="rounded-xl bg-budu-500 py-3 text-sm font-bold text-white shadow-lg shadow-budu-100 disabled:bg-slate-200 disabled:shadow-none">{submitting ? '正在创建…' : '结算'}</button>
+                {canCreateExternalOrder && <button onClick={openPlatformCheckout} disabled={!storeOperating || !cartCount || submitting || cartTotal <= 0n || !canConfirmExternalSettlement} className="rounded-xl border border-violet-200 bg-violet-50 py-3 text-sm font-bold text-violet-700 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400">平台订单</button>}
               </div>
             </div>
             </>}
@@ -1119,7 +1130,7 @@ export default function PosPage({ user, onExit, scannerDecoderFactory, initialOr
             </div>
             {platformCheckout.source && <div className="budu-overlay-footer grid grid-cols-2 gap-3 border-t border-slate-100 bg-white p-4 pb-[max(16px,env(safe-area-inset-bottom))] sm:px-5">
               <button onClick={() => !submitting && setPlatformCheckout({ source: '', requestKey: '' })} disabled={submitting} className="min-h-11 rounded-xl border border-slate-200 text-sm font-bold text-slate-600 disabled:opacity-50">返回</button>
-              <button onClick={checkoutExternalOrder} disabled={submitting} className="min-h-11 rounded-xl bg-violet-600 text-sm font-bold text-white shadow-lg shadow-violet-100 disabled:opacity-50">{submitting ? '正在记录…' : '确认记录'}</button>
+              <button onClick={checkoutExternalOrder} disabled={!storeOperating || submitting} className="min-h-11 rounded-xl bg-violet-600 text-sm font-bold text-white shadow-lg shadow-violet-100 disabled:opacity-50">{submitting ? '正在记录…' : '确认记录'}</button>
             </div>}
           </div>
         </div>
