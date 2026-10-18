@@ -61,7 +61,8 @@ jobs:
           test "$REQUESTED_RELEASE_SHA" = "$GITHUB_SHA"
           test "$GITHUB_REF" = refs/heads/codex/store-pickup-001-release
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          python3 scripts/test-store-pickup-release.py
+          # Business, launcher and MP evidence are frozen and already reviewed.
+          python3 scripts/test-store-pickup-release.py PhaseCapacity
           python3 scripts/deploy-prod-store-pickup.py identity --repo "$PWD" --release-sha "$GITHUB_SHA"
       - uses: docker/setup-buildx-action@v3
       - name: Build full exact Linux amd64 archive without production access

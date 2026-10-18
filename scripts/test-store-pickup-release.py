@@ -154,4 +154,112 @@ for(const scenario of ['ok','checksum','failed','column','duplicate']){
   result=subprocess.run(['node','--input-type=module','-e',script],input=json.dumps({'sql':p.migration_script(V),'old':V['oldLedger']}),text=True,capture_output=True,cwd=ROOT,timeout=120)
   self.assertEqual(result.returncode,0,result.stderr);print(result.stdout.strip())
 
+class PhaseCapacity(unittest.TestCase):
+ def setUp(self):
+  self.v=copy.deepcopy(V);self.v['art']={'release':V['release'],'archive':568905216,'blobs':568884891,'expanded':2101489664,'largest':1159405568,'archiveHash':'a'*64,'layers':[{'chainId':'chain'}]}
+  self.v['capacityPlan']=p.capacity_plan(self.v,{'dbBytes':180616215,'pgVersion':'16.14'});self.v['limits']=self.v['capacityPlan']['limits']
+  self.r=Mock();self.r.disk.return_value=(20*p.m.GIB,40*p.m.GIB);self.r.run.return_value=b'df'
+  self.patch=patch.object(p.m,'b2_committed',return_value={'baseline'});self.patch.start();self.addCleanup(self.patch.stop)
+  self.archive={'device':1,'inode':2,'bytes':568905216,'sha256':'a'*64}
+  self.apatch=patch.object(p,'retained_archive',return_value=self.archive);self.apatch.start();self.addCleanup(self.apatch.stop)
+ def start(self):return p.capacity(self.r,self.v,'PICKUP_PRE_IMPORT')
+ def imp(self):return {'serverWaitComplete':True,'serverSha256BeforeImport':True,'returncode':0,'archiveHash':'a'*64,'archiveBytes':568905216}
+ def imported(self):
+  self.start()
+  with patch.object(p.m,'resolve_loaded_image'),patch.object(p.m,'b1_storage',return_value={'terminated':True}),patch.object(p.m,'b2_committed',return_value={'baseline','chain'}):
+   return p.capacity(self.r,self.v,'PICKUP_IMPORTED',self.imp())
+ def backup(self):
+  return dict(result='PASS',releaseSha=self.v['release'],restoreContainer='budu-bg-restore-'+self.v['release'][:12],pgVersion='16.14',sourceSnapshotFingerprint={'hash':'fingerprint'},restoredFingerprint={'hash':'fingerprint'},backupBytes=200,restoreAllocatedBytes=300,backupSha256='b'*64,**{k:True for k in ['backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified']})
+ def test_plan_retains_full_archive_both_stages(self):
+  q=self.v['capacityPlan'];self.assertEqual(q['import'],5183281330);self.assertEqual(q['database'],5396718885)
+  changed=copy.deepcopy(self.v);changed['art']['archive']+=100
+  z=p.capacity_plan(changed,{'dbBytes':180616215,'pgVersion':'16.14'});self.assertEqual(z['import']-q['import'],100);self.assertEqual(z['database']-q['database'],100)
+ def test_admission_uses_max_preserves_all_original_thresholds(self):
+  r=self.start();self.assertEqual(r['future'],5183281330);self.assertEqual(r['planned'],5396718885);self.assertEqual(r['peak'],5396718885)
+  self.assertEqual(p.m.ABSOLUTE_MAX_PEAK,6*p.m.GIB);self.assertEqual(p.m.MIN_PROJECTED_AVAILABLE,10*p.m.GIB);self.assertEqual(p.m.MAX_PROJECTED_USAGE,90);self.assertEqual(p.m.RESERVE,512*1024**2)
+ def test_stage_names_and_missing_receipts_never_discount(self):
+  self.start();cap=self.v['art']['capacityLedger'];before=copy.deepcopy(cap)
+  for stage,proof in [('PICKUP_IMPORTED',None),('PICKUP_IMPORTED',{}),('PICKUP_BACKUP_RETAINED',self.backup()),('PICKUP_DB89',{}),('PICKUP_FINAL',{})]:
+   with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,stage,proof)
+   self.assertEqual(cap,before)
+ def test_import_receipt_identity_failures(self):
+  self.start()
+  for key,value in [('serverWaitComplete',False),('returncode',1),('archiveHash','c'*64),('archiveBytes',1),('serverSha256BeforeImport',False)]:
+   bad=dict(self.imp(),**{key:value})
+   with patch.object(p.m,'resolve_loaded_image'),patch.object(p.m,'b1_storage',return_value={'terminated':True}),patch.object(p.m,'b2_committed',return_value={'baseline','chain'}):
+    with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_IMPORTED',bad)
+   self.assertEqual(self.v['art']['capacityLedger']['phase'],'PICKUP_PRE_IMPORT')
+ def test_storage_failure_and_unknown_committed_refuse_transition(self):
+  self.start()
+  with patch.object(p.m,'resolve_loaded_image'),patch.object(p.m,'b1_storage',side_effect=p.m.GateError('B1_STORAGE_UNKNOWN')):
+   with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_IMPORTED',self.imp())
+  with patch.object(p.m,'resolve_loaded_image'),patch.object(p.m,'b1_storage',return_value={'terminated':True}),patch.object(p.m,'b2_committed',return_value={'baseline','foreign'}):
+   with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_IMPORTED',self.imp())
+  self.assertEqual(self.v['art']['capacityLedger']['phase'],'PICKUP_PRE_IMPORT')
+ def test_verified_import_removes_only_future_import_temporary(self):
+  r=self.imported();cap=self.v['art']['capacityLedger'];self.assertEqual(r['future'],p.m.RESERVE+sum(self.v['limits'].values()));self.assertEqual(len(cap['phaseReceipts']),1)
+  self.assertEqual(cap['archiveIdentity'],self.archive);self.assertEqual(len(cap['observations']),2);self.assertEqual(cap['peak'],5396718885)
+ def test_backup_requires_success_identity_fingerprint_and_all_terminations(self):
+  self.imported()
+  for key,value in [('result','FAIL'),('releaseSha','wrong'),('restoreContainer','wrong'),('pgVersion','other'),('restoredFingerprint',{}),('backupBytes',0),('backupBytes',self.v['limits']['backupLimit']+1),('restoreAllocatedBytes',0),('restoreAllocatedBytes',self.v['limits']['restoreLimit']+1),('backupSha256','bad')]+[(k,False) for k in ['backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified']]:
+   with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_BACKUP_RETAINED',dict(self.backup(),**{key:value}))
+   self.assertEqual(self.v['art']['capacityLedger']['phase'],'PICKUP_IMPORTED')
+  result=p.capacity(self.r,self.v,'PICKUP_BACKUP_RETAINED',self.backup());self.assertEqual(result['future'],p.m.RESERVE+self.v['limits']['walLimit']+self.v['limits']['migratorLimit'])
+ def test_migration_atomic_and_terminated_then_actual_ledger_required(self):
+  self.imported();p.capacity(self.r,self.v,'PICKUP_BACKUP_RETAINED',self.backup());ok={'result':'PASS','terminated':True,'transactionAtomic':True,'returncode':0}
+  for k,x in [('result','FAIL'),('terminated',False),('transactionAtomic',False),('returncode',1)]:
+   with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_DB89',dict(ok,**{k:x}))
+  with patch.object(p,'database',side_effect=p.m.GateError('PICKUP_DATABASE_CONTRACT')):
+   with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_DB89',ok)
+  with patch.object(p,'database') as d:
+   r=p.capacity(self.r,self.v,'PICKUP_DB89',ok);d.assert_called_once_with(self.r,self.v,89);self.assertEqual(r['future'],p.m.RESERVE)
+ def test_historical_peak_observations_and_baseline_never_reset(self):
+  self.start();cap=self.v['art']['capacityLedger'];baseline=(cap['baselineUsed'],cap['baselineAvailable']);cap['peak']=int(5.9*p.m.GIB)
+  self.r.disk.return_value=(19*p.m.GIB,41*p.m.GIB)
+  with patch.object(p.m,'resolve_loaded_image'),patch.object(p.m,'b1_storage',return_value={'terminated':True}),patch.object(p.m,'b2_committed',return_value={'baseline','chain'}):p.capacity(self.r,self.v,'PICKUP_IMPORTED',self.imp())
+  self.assertEqual(cap['peak'],int(5.9*p.m.GIB));self.assertEqual(len(cap['observations']),2);self.assertEqual((cap['baselineUsed'],cap['baselineAvailable']),baseline)
+ def test_real_retained_growth_can_still_fail_original_peak(self):
+  self.start();self.r.disk.return_value=(25*p.m.GIB,35*p.m.GIB)
+  with patch.object(p.m,'resolve_loaded_image'),patch.object(p.m,'b1_storage',return_value={'terminated':True}),patch.object(p.m,'b2_committed',return_value={'baseline','chain'}):
+   with self.assertRaisesRegex(p.m.GateError,'B1_CAPACITY_6GIB'):p.capacity(self.r,self.v,'PICKUP_IMPORTED',self.imp())
+  self.assertGreater(self.v['art']['capacityLedger']['peak'],6*p.m.GIB)
+ def test_ten_gib_still_blocks_and_one_gib_not_new_hard_gate(self):
+  self.r.disk.return_value=(20*p.m.GIB,14*p.m.GIB)
+  with self.assertRaisesRegex(p.m.GateError,'B1_CAPACITY_10GIB'):self.start()
+  self.v['art'].pop('capacityLedger');self.r.disk.return_value=(20*p.m.GIB,16*p.m.GIB);self.start()
+ def test_plan_drift_and_foreign_ledger_rejected(self):
+  self.start();self.v['capacityPlan']['database']-=1
+  with self.assertRaisesRegex(p.m.GateError,'PICKUP_CAPACITY_PLAN_CHANGED'):p.capacity(self.r,self.v,'PICKUP_IMPORTED',self.imp())
+ def test_archive_change_blocks_later_phase(self):
+  self.imported()
+  with patch.object(p,'retained_archive',side_effect=p.m.GateError('PICKUP_RETAINED_ARCHIVE_CHANGED')):
+   with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_BACKUP_RETAINED',self.backup())
+ def test_repeat_transition_rejected_without_replaying_import(self):
+  self.imported()
+  with patch.object(p.m,'b2_barrier') as b:
+   with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_IMPORTED',self.imp())
+   b.assert_not_called()
+ def test_final_requires_active_unique_writer_route_and_old_stopped(self):
+  self.imported();p.capacity(self.r,self.v,'PICKUP_BACKUP_RETAINED',self.backup())
+  with patch.object(p,'database'):p.capacity(self.r,self.v,'PICKUP_DB89',{'result':'PASS','terminated':True,'transactionAtomic':True,'returncode':0})
+  state={'phase':89,'candidate':'candidate','candidateId':'full-id'};self.r.routes.return_value=('route','route');self.r.inspect.return_value={'State':{'Running':False}}
+  for guard in ['lifecycle','writer','route','oldRunning']:
+   with patch.object(p.m,'bg_lifecycle',side_effect=p.m.GateError('LIFECYCLE') if guard=='lifecycle' else None),patch.object(p,'writer',side_effect=p.m.GateError('WRITER') if guard=='writer' else None),patch.object(p.m,'route_target',return_value='foreign' if guard=='route' else 'candidate'):
+    self.r.inspect.return_value={'State':{'Running':guard=='oldRunning'}}
+    with self.assertRaises(p.m.GateError):p.capacity(self.r,self.v,'PICKUP_FINAL',state)
+  self.r.inspect.return_value={'State':{'Running':False}}
+  with patch.object(p.m,'bg_lifecycle'),patch.object(p,'writer'),patch.object(p.m,'route_target',return_value='candidate'):
+   result=p.capacity(self.r,self.v,'PICKUP_FINAL',state);self.assertEqual(result['future'],p.m.RESERVE)
+  cap=self.v['art']['capacityLedger'];self.assertEqual(len(cap['observations']),5);self.assertEqual(len(cap['phaseReceipts']),4);self.assertEqual(cap['peak'],5396718885)
+ def test_ninety_percent_is_unchanged(self):
+  self.r.disk.return_value=(150*p.m.GIB,16*p.m.GIB)
+  with self.assertRaisesRegex(p.m.GateError,'B1_CAPACITY_90PCT'):self.start()
+ def test_foreign_plan_in_existing_ledger_never_overwrites_history(self):
+  self.start();cap=self.v['art']['capacityLedger'];cap['plan']['release']='foreign';before=copy.deepcopy(cap)
+  with self.assertRaisesRegex(p.m.GateError,'PICKUP_CAPACITY_PLAN_CHANGED'):p.capacity(self.r,self.v,'PICKUP_IMPORTED',self.imp())
+  self.assertEqual(cap,before)
+ def test_remote_uses_same_new_budget_functions(self):
+  code=p.bootstrap_source().rsplit('\nv=json.loads(sys.stdin.buffer.readline())',1)[0];scope={};exec(compile(code,'bootstrap','exec'),scope)
+  self.assertEqual(scope['capacity_plan'](self.v,{'dbBytes':180616215,'pgVersion':'16.14'}),self.v['capacityPlan']);self.assertIn('retained_archive',scope)
+
 if __name__=='__main__':unittest.main(verbosity=2)

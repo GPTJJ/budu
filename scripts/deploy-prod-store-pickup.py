@@ -94,10 +94,104 @@ def old_guard(remote,v,phase=88):
     mount_contract(c,p)
     db=writer(remote,v,{'phase':phase},[p['container']]);return c,db
 
-def capacity(remote,v,phase,future):
-    try:return m.bg_capacity(remote,v['art'],phase,future)
+def capacity_plan(v,db):
+    art=v['art'];limits=m.shipping_resources(db)
+    retained=sum(art[k] for k in ('archive','blobs','expanded'))
+    return {'version':'PICKUP_RETAINED_ARCHIVE_PHASES_V1','release':v['release'],
+            'archiveHash':art['archiveHash'],'dbBytes':db['dbBytes'],'pgVersion':db['pgVersion'],'limits':limits,
+            'import':retained+art['largest']+m.RESERVE+limits['walLimit'],
+            'database':retained+m.RESERVE+sum(limits.values())}
+
+
+
+def retained_archive(remote,v,expected=None):
+    code="""import os,json,sys,stat,hashlib,pathlib
+v=json.load(sys.stdin);p=pathlib.Path('/opt/budu/.rollback-assets/blue-green-'+v['release'])/'exact-e.tar'
+assert p.parent.resolve()==p.parent and p.parent.stat().st_dev==os.stat('/').st_dev
+fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW)
+with os.fdopen(fd,'rb') as f:
+ s=os.fstat(f.fileno());assert stat.S_ISREG(s.st_mode) and s.st_uid==0 and s.st_nlink==1
+ h=hashlib.sha256()
+ for b in iter(lambda:f.read(1024*1024),b''):h.update(b)
+ identity=lambda q:(q.st_dev,q.st_ino,q.st_mode,q.st_nlink,q.st_uid,q.st_gid,q.st_size,q.st_mtime_ns,q.st_ctime_ns)
+ assert identity(os.fstat(f.fileno()))==identity(s) and identity(p.lstat())==identity(s)
+ assert s.st_size==v['bytes'] and h.hexdigest()==v['sha256']
+ print(json.dumps({'device':s.st_dev,'inode':s.st_ino,'bytes':s.st_size,'sha256':h.hexdigest()}))
+"""
+    receipt=json.loads(remote.py(code,{'release':v['release'],'bytes':v['art']['archive'],'sha256':v['art']['archiveHash']},timeout=60))
+    require(receipt.get('bytes')==v['art']['archive'] and receipt.get('sha256')==v['art']['archiveHash']
+            and (expected is None or receipt==expected),'PICKUP_RETAINED_ARCHIVE_CHANGED')
+    return receipt
+
+
+def capacity(remote,v,phase,proof=None):
+    """Original gate, monotonically accumulated across proven phase changes.
+
+    No allowance is removed because of a caller's phase string alone. The
+    archive remains in the plan and actual retained bytes remain in df.
+    """
+    art=v['art'];plan=v['capacityPlan'];limits=v['limits']
+    require(plan==capacity_plan(v,{'dbBytes':plan['dbBytes'],'pgVersion':plan['pgVersion']}) and limits==plan['limits'],
+            'PICKUP_CAPACITY_PLAN_CHANGED')
+    cap=art.get('capacityLedger');previous=cap.get('phase') if cap else None
+    evidence=None
+    if phase=='PICKUP_PRE_IMPORT':
+        require(previous in (None,phase),'PICKUP_CAPACITY_PHASE_INVALID')
+        future=plan['import']
+    else:
+        order={'PICKUP_IMPORTED':'PICKUP_PRE_IMPORT','PICKUP_BACKUP_RETAINED':'PICKUP_IMPORTED',
+               'PICKUP_DB89':'PICKUP_BACKUP_RETAINED','PICKUP_FINAL':'PICKUP_DB89'}
+        require(previous==order.get(phase) and phase in order,'PICKUP_CAPACITY_PHASE_INVALID')
+        require(cap.get('plan')==plan,'PICKUP_CAPACITY_PLAN_CHANGED')
+        require(isinstance(proof,dict),'PICKUP_CAPACITY_PROOF_MISSING')
+        if phase=='PICKUP_IMPORTED':
+            # Full original identity/storage/committed-chain barrier. A load
+            # receipt or phase name alone never retires import temporary space.
+            storage=m.b2_barrier(remote,art,proof,cap)
+            require(proof.get('serverSha256BeforeImport') is True,'B2_IMPORT_UNKNOWN')
+            cap['archiveIdentity']=retained_archive(remote,v)
+            evidence={'importReceipt':proof,'storage':storage,'archiveIdentity':cap['archiveIdentity']}
+            future=m.RESERVE+sum(limits.values())
+        elif phase=='PICKUP_BACKUP_RETAINED':
+            retained_archive(remote,v,cap['archiveIdentity'])
+            flags=['backupTerminationVerified','exporterTerminated','dumpTerminated',
+                   'restoreStopped','restoreProcessTerminated','restoreVerified']
+            require(proof.get('result')=='PASS' and all(proof.get(k) is True for k in flags)
+                    and proof.get('releaseSha')==v['release'] and proof.get('restoreContainer')=='budu-bg-restore-'+v['release'][:12]
+                    and proof.get('pgVersion')=='16.14'
+                    and bool(proof.get('sourceSnapshotFingerprint'))
+                    and proof.get('sourceSnapshotFingerprint')==proof.get('restoredFingerprint')
+                    and type(proof.get('backupBytes')) is int and 0<proof['backupBytes']<=limits['backupLimit']
+                    and type(proof.get('restoreAllocatedBytes')) is int and 0<proof['restoreAllocatedBytes']<=limits['restoreLimit']
+                    and re.fullmatch('[0-9a-f]{64}',proof.get('backupSha256','')) is not None,
+                    'PICKUP_BACKUP_UNVERIFIED')
+            evidence={'backup':proof};future=m.RESERVE+limits['walLimit']+limits['migratorLimit']
+        elif phase=='PICKUP_DB89':
+            retained_archive(remote,v,cap['archiveIdentity'])
+            require(proof.get('result')=='PASS' and proof.get('terminated') is True
+                    and proof.get('transactionAtomic') is True and proof.get('returncode')==0,
+                    'PICKUP_MIGRATION_UNVERIFIED')
+            database(remote,v,89);evidence={'migration':proof,'ledger':v['ledger']};future=m.RESERVE
+        else:
+            retained_archive(remote,v,cap['archiveIdentity'])
+            require(proof.get('phase')==89,'PICKUP_CAPACITY_PROOF_MISSING')
+            m.bg_lifecycle(remote,v,proof,'active');writer(remote,v,proof,[proof['candidate']])
+            require(m.route_target(*remote.routes())==proof['candidate']
+                    and not remote.inspect(v['proof']['id'])['State']['Running'],'PICKUP_FINAL_UNVERIFIED')
+            remote.health(proof['candidate'],v['release'],True)
+            evidence={'candidateId':proof['candidateId'],'runtime':'active','writer':1};future=m.RESERVE
+    used,available=remote.disk()
+    if cap is None:
+        cap={'baselineUsed':used,'baselineAvailable':available,'peak':0,
+             'baselineCommitted':sorted(m.b2_committed(remote)),'plan':copy.deepcopy(plan)}
+        art['capacityLedger']=cap
+    require(cap.get('plan')==plan,'PICKUP_CAPACITY_PLAN_CHANGED')
+    if evidence is not None:
+        cap.setdefault('phaseReceipts',[]).append({'from':previous,'to':phase,'evidence':copy.deepcopy(evidence)})
+    cap['phase']=phase
+    try:return m.b1_capacity_gate(cap,used,available,future,planned=max(plan['import'],plan['database']))
     except m.GateError:
-        print(json.dumps({'stage':'CAPACITY_BLOCKED','capacityLedger':v['art'].get('capacityLedger'),'dfRaw':remote.run(['df','-Pk','/']).decode()}),flush=True)
+        print(json.dumps({'stage':'CAPACITY_BLOCKED','capacityLedger':cap,'dfRaw':remote.run(['df','-Pk','/']).decode()}),flush=True)
         raise
 
 def preflight(remote,v):
@@ -108,8 +202,8 @@ def preflight(remote,v):
     root='/opt/budu/.rollback-assets/blue-green-'+v['release']
     require(remote.run(['test','!','-e',root])==b'','PICKUP_RELEASE_ROOT_EXISTS')
     limits=m.shipping_resources(db);v['limits']=limits
-    future=sum(v['art'][k] for k in ('archive','blobs','expanded','largest'))+m.RESERVE+sum(limits.values())
-    budget=capacity(remote,v,'PICKUP_PRE_IMPORT',future)
+    v['capacityPlan']=capacity_plan(v,db)
+    budget=capacity(remote,v,'PICKUP_PRE_IMPORT')
     return {'result':'PREFLIGHT_PASS','sha':v['release'],'old':v['proof']['sha'],'writer':1,'dbApplied':88,'dbFailed':0,'lockAbsent':True,
             'budget':budget,'capacityLedger':v['art']['capacityLedger'],'migrationLimits':limits,'dfRaw':remote.run(['df','-Pk','/']).decode()}
 
@@ -170,8 +264,8 @@ def execute(remote,v,stream):
         receipt=lock(remote,v,'claim');owned=True
         root='/opt/budu/.rollback-assets/blue-green-'+v['release'];state['root']=root
         remote.py("import json,pathlib,sys,os;v=json.load(sys.stdin);os.umask(0o077);p=pathlib.Path(v['root']);p.mkdir(mode=0o700);(p/'manifest.json').write_text(json.dumps(v['manifest'],sort_keys=True))",{'root':root,'manifest':{'releaseSha':v['release'],'businessSha':BUSINESS,'migration':MIGRATION,'sqlHash':SQL_HASH,'rollback':v['proof']}})
-        stage='IMPORT';imp=m.bg_import(stream,v['art'],root);v['art']['loadedDockerImageId']=m.resolve_loaded_image(remote,v['art'])['Id'];m.b2_barrier(remote,v['art'],imp,v['art']['capacityLedger'])
-        capacity(remote,v,'PICKUP_IMPORTED',m.RESERVE+sum(v['limits'].values()))
+        stage='IMPORT';imp=m.bg_import(stream,v['art'],root);v['art']['loadedDockerImageId']=m.resolve_loaded_image(remote,v['art'])['Id']
+        capacity(remote,v,'PICKUP_IMPORTED',imp)
         stage='PRISMA_PROBE'
         probe="import {PrismaClient,Prisma} from '@prisma/client';const f=Prisma.dmmf.datamodel.models.find(x=>x.name==='Store').fields.find(x=>x.name==='pickupEnabled');if(!f||f.dbName!=='pickup_enabled'||f.type!=='Boolean'||!f.isRequired)throw Error('PRISMA_PICKUP_FIELD');const p=new PrismaClient();try{await p.$queryRawUnsafe('SELECT 1');process.stdout.write('BG_PRE_MIGRATION_PROBE_OK\\n')}finally{await p.$disconnect()}"
         pr=m.bg_script(remote,m.BG_PROBE_CODE,{'old':g['Id'],'name':'budu-bg-probe-'+v['release'][:12],'release':v['release'],'image':v['art']['imageReference'],'imageId':v['art']['loadedDockerImageId'],'script':probe},60)
@@ -179,11 +273,11 @@ def execute(remote,v,stream):
         stage='SNAPSHOT_BACKUP';state['backupAttempted']=True
         b=m.bg_script(remote,m.BG_SNAPSHOT_CODE,{'root':root,'pg':m.PG,'database':m.EXPECTED_DB,'limits':v['limits'],'release':v['release'],'restore':'budu-bg-restore-'+v['release'][:12]});state['backup']=b
         require(b.get('result')=='PASS' and all(b.get(k) is True for k in ['backupTerminationVerified','exporterTerminated','dumpTerminated','restoreStopped','restoreProcessTerminated','restoreVerified']) and b['sourceSnapshotFingerprint']==b['restoredFingerprint'],'PICKUP_BACKUP_UNVERIFIED')
-        old_guard(remote,v);capacity(remote,v,'PICKUP_BACKUP_RETAINED',m.RESERVE+v['limits']['walLimit']+v['limits']['migratorLimit'])
+        old_guard(remote,v);capacity(remote,v,'PICKUP_BACKUP_RETAINED',b)
         stage='ATOMIC_PICKUP_MIGRATION';state['migrationAttempted']=True
         mig=m.bg_script(remote,PICKUP_MIGRATION_CODE,{'pg':m.PG,'database':m.EXPECTED_DB,'release':v['release'],'transaction':migration_script(v)},60);state['migration']=mig
         require(mig.get('result')=='PASS' and mig.get('terminated') is True,'PICKUP_MIGRATION_UNVERIFIED')
-        state['phase']=89;old_guard(remote,v,89);capacity(remote,v,'PICKUP_DB89',m.RESERVE)
+        state['phase']=89;old_guard(remote,v,89);capacity(remote,v,'PICKUP_DB89',mig)
         stage='CANDIDATE';m.bg_clone(remote,v,state);name=state['candidate'];remote.health(name,v['release']);m.bg_lifecycle(remote,v,state,'standby')
         authority=m.mount_readability(remote,g['Id']);m.runtime_checks(remote,name,v['art']['runtimeHash'],authority);m.application_db_probe(remote,name,'PICKUP_CANDIDATE_DB_PROBE')
         sqlprobe="import {PrismaClient} from '@prisma/client';const p=new PrismaClient();try{await p.store.findMany({select:{key:true,pickupEnabled:true}});process.stdout.write('PICKUP_SCHEMA_OK\\n')}finally{await p.$disconnect()}"
@@ -194,7 +288,7 @@ def execute(remote,v,stream):
         stage='ZERO_WRITER';writer(remote,v,state,[],True)
         stage='PROMOTION';m.bg_promote(remote,v,state);m.bg_lifecycle(remote,v,state,'active');writer(remote,v,state,[name])
         stage='CUTOVER';m.replace_routes(remote,next_routes,next_routes);remote.health(name,v['release'],True);m.application_db_probe(remote,name,'PICKUP_CANDIDATE_DB_PROBE');writer(remote,v,state,[name])
-        require(m.route_target(*remote.routes())==name,'FINAL_ROUTE_CHANGED');capacity(remote,v,'PICKUP_FINAL',0)
+        require(m.route_target(*remote.routes())==name,'FINAL_ROUTE_CHANGED');capacity(remote,v,'PICKUP_FINAL',state)
         m.write_authority(remote,m.CURRENT_SHA_FILE,v['release']+'\n');require(remote.run(['cat',m.CURRENT_SHA_FILE]).decode().strip()==v['release'],'FINAL_POINTER_FAILED')
         require(not remote.inspect(g['Id'])['State']['Running'] and remote.inspect(g['Image'],image=True)['Id']==g['Image'],'ROLLBACK_ASSET_CHANGED')
         result={'result':'DEPLOY_COMPLETE','releaseSha':v['release'],'businessSha':BUSINESS,'dbApplied':89,'dbFailed':0,'writer':1,'runtimeMode':'active','route':name,'internalHealth':'PASS','publicHealth':'PASS','applicationDbProbe':'PASS','backup':b,'migration':mig,'oldStopped':True,'importReceipt':imp}
