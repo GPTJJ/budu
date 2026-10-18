@@ -97,6 +97,12 @@ class Contract(unittest.TestCase):
    with self.assertRaises(p.m.GateError):p.mount_contract(bad,proof)
   bad=copy.deepcopy(c);bad['HostConfig']['Memory']=1
   with self.assertRaises(p.m.GateError):p.mount_contract(bad,proof)
+ def test_16_streamed_failure_and_transport_receipts(self):
+  for rc,out in [(0,b''),(0,b'not-json'),(255,b'{"result":"DEPLOY_COMPLETE"}'),(0,b'{"stage":"CAPACITY_BLOCKED"}\n{"result":"DEPLOY_BLOCKED"}')]:
+   with self.assertRaises(p.m.GateError):p.parse_execution(out,rc,V['release'])
+  good={'result':'DEPLOY_COMPLETE','releaseSha':V['release'],'dbApplied':89,'dbFailed':0,'writer':1,'runtimeMode':'active','internalHealth':'PASS','publicHealth':'PASS','applicationDbProbe':'PASS','oldStopped':True,'releaseLockReleased':True}
+  out=(json.dumps({'stage':'observation'})+'\n'+json.dumps(good)).encode();self.assertEqual(p.parse_execution(out,0,V['release']),good)
+  with self.assertRaises(p.m.GateError):p.parse_execution(out+b'\n'+json.dumps(good).encode(),0,V['release'])
  def test_10_atomic_sql_disposable_postgres(self):
   script=r'''
 import {PGlite} from '@electric-sql/pglite';import assert from 'node:assert/strict';

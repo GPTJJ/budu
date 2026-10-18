@@ -240,6 +240,15 @@ def completed(result,release):
     require(all(result.get(k)==x for k,x in {'result':'DEPLOY_COMPLETE','releaseSha':release,'dbApplied':89,'dbFailed':0,'writer':1,'runtimeMode':'active','internalHealth':'PASS','publicHealth':'PASS','applicationDbProbe':'PASS','oldStopped':True,'releaseLockReleased':True}.items()),'PICKUP_DEPLOY_NOT_COMPLETE')
 
 
+def parse_execution(out,returncode,release):
+    require(returncode==0,'PICKUP_TRANSPORT_UNKNOWN')
+    try:records=[json.loads(line) for line in out.splitlines() if line.strip()]
+    except (ValueError,UnicodeError):raise m.GateError('PICKUP_RECEIPT_INVALID') from None
+    terminal=[x for x in records if isinstance(x,dict) and 'result' in x]
+    require(len(terminal)==1 and records[-1] is terminal[0],'PICKUP_RECEIPT_INCOMPLETE')
+    completed(terminal[0],release);return terminal[0]
+
+
 def deploy(remote,v,archive,authorized):
     require(authorized==v['release'],'EXACT_RELEASE_AUTHORIZATION_REQUIRED')
     # One on-host controller owns mutations and failure recovery, as in existing BG flow.
@@ -247,13 +256,24 @@ def deploy(remote,v,archive,authorized):
     loader="import json,sys;exec(compile(json.loads(sys.stdin.buffer.readline()),'<budu-pickup>','exec'))"
     import shlex
     p=subprocess.Popen(remote.ssh+[shlex.join(['sudo','-n','python3','-u','-c',loader])],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-    p.stdin.write(json.dumps(code).encode()+b'\n');p.stdin.write(json.dumps(v).encode()+b'\n')
-    with open(archive,'rb') as src:
-        for b in iter(lambda:src.read(1024**2),b''):p.stdin.write(b)
-    p.stdin.close();p.stdin=None
-    out,err=p.communicate(timeout=1800);require(p.returncode==0,'PICKUP_TRANSPORT_UNKNOWN')
-    result=json.loads(out);print(json.dumps(result),flush=True)
-    completed(result,v['release'])
+    feed_error=False
+    try:
+        p.stdin.write(json.dumps(code).encode()+b'\n');p.stdin.write(json.dumps(v).encode()+b'\n')
+        with open(archive,'rb') as src:
+            for b in iter(lambda:src.read(1024**2),b''):p.stdin.write(b)
+    except OSError:feed_error=True
+    finally:
+        try:p.stdin.close()
+        except OSError:feed_error=True
+        p.stdin=None
+    try:out,err=p.communicate(timeout=1800)
+    except subprocess.TimeoutExpired:
+        # Stop only this local transport; remote ownership/recovery remains authoritative.
+        p.kill();out,err=p.communicate();sys.stdout.buffer.write(out);sys.stdout.buffer.flush();sys.stderr.buffer.write(err);sys.stderr.buffer.flush()
+        raise m.GateError('PICKUP_TRANSPORT_TIMEOUT_UNKNOWN') from None
+    sys.stdout.buffer.write(out);sys.stdout.buffer.flush();sys.stderr.buffer.write(err);sys.stderr.buffer.flush()
+    require(not feed_error,'PICKUP_TRANSPORT_WRITE_UNKNOWN')
+    parse_execution(out,p.returncode,v['release'])
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('mode',choices=['identity','inspect-artifact','preflight','deploy']);p.add_argument('--repo',type=Path,required=True);p.add_argument('--release-sha',required=True);p.add_argument('--archive',type=Path);p.add_argument('--ssh-key');p.add_argument('--authorize-release-sha');a=p.parse_args()
