@@ -94,6 +94,12 @@ class LedgerAndEntryTests(unittest.TestCase):
         v=self.value();v['art']['runtimeHash']='f'*64
         with self.assertRaises(r.GateError):r.store_remote_bootstrap(v)
         with patch.object(r,'EXPECTED_OLD_SHA','f'*40),self.assertRaises(r.GateError):r.store_remote_bootstrap(self.value())
+    def test_existing_fresh_lock_contract(self):
+        captured=[]
+        with patch.object(r,'bg_script',side_effect=lambda remote,code,value:captured.append(value) or {}):
+            r.bg_lock(object(),{'live':LIVE,'art':{'release':'a'*40}},'claim')
+        self.assertTrue(captured[0]['fresh'])
+        self.assertEqual(captured[0]['stale'],{'present':False,'openReferences':[]})
     def test_ci_and_remote_wiring(self):
         shell=(ROOT/'scripts/release-prod-post-transfer-ci.sh').read_text();workflow=(ROOT/'.github/workflows/release-build-only.yml').read_text()
         self.assertIn('PROFILE+=(--blue-green-live-proof',shell)

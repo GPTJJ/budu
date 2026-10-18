@@ -115,7 +115,8 @@
     "org.opencontainers.image.revision": "eb9536731e42608004407d8a787b5927f7d42c9d"
   },
   "releaseLock": {
-    "exists": false
+    "present": false,
+    "openReferences": []
   },
   "verifiedAt": "2026-10-18",
   "businessTree": "2a040999486bc4da741836123be70a2549ab3d3c"

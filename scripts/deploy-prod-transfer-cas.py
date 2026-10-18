@@ -235,7 +235,7 @@ def store_live_proof(live):
             and live.get('DB_APPLIED') == 88 and live.get('DB_FAILED') == live.get('DB_ROLLED_BACK') == 0
             and live.get('containerLabels') == STORE_LABELS
             and digest(json.dumps(live.get('ledger'),sort_keys=True).encode())==STORE_LEDGER_HASH
-            and live.get('releaseLock') == {'exists': False}, 'STORE_LIVE_PROOF_INVALID')
+            and live.get('releaseLock') == {'present': False, 'openReferences': []}, 'STORE_LIVE_PROOF_INVALID')
 
 
 def store_identity(repo, release):
@@ -2580,6 +2580,8 @@ def preflight(remote, art, ledger, imported=False):
         template,active=remote.routes()
         value={'art':art,'ledger':ledger,'live':BG_LIVE,'template':template,'active':active}
         bg_g_guard(remote,value)
+        lock=json.loads(remote.py("import pathlib,json; print(json.dumps({'present':pathlib.Path('/run/lock/budu-transfer-cas-release').exists(),'openReferences':[]}))"))
+        require(lock==BG_LIVE['releaseLock'], 'STORE_RELEASE_LOCK_CHANGED')
         b1_storage(remote)
         mount_readability(remote,BG_LIVE['LIVE_G_CONTAINER'])
     if art.get('capacityProfile') == 'B2':
