@@ -19,7 +19,7 @@ function Facts({ content: c }) {
   </div>;
 }
 
-export default function PurchaseReturnsPanel({ currentUser, stores }) {
+export default function PurchaseReturnsPanel({ currentUser, stores, originalOrderId = '' }) {
   const [rows, setRows] = useState([]), [options, setOptions] = useState({ suppliers: [], items: [] }), [detail, setDetail] = useState(null), [history, setHistory] = useState([]);
   const [edit, setEdit] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [why, setWhy] = useState(''), [reasonAction, setReasonAction] = useState('');
   const request = useRef(null), inFlight = useRef(false);
@@ -27,7 +27,14 @@ export default function PurchaseReturnsPanel({ currentUser, stores }) {
   const run = async fn => { if (inFlight.current) return; inFlight.current = true; setBusy(true); setError(''); try { await fn(); } catch (e) { setError(e.message); } finally { inFlight.current = false; setBusy(false); } };
   const load = async () => { const r = await api('/v2/procurement/returns'); setRows(r.rows); };
   const open = async id => { const r = await api('/v2/procurement/returns/' + id); setDetail(r.record); setHistory(r.history); setEdit(null); setReasonAction(''); };
-  useEffect(() => { run(async () => { const o = await api('/v2/procurement/return-options'); setOptions(o); await load(); }); }, [currentUser.id]);
+  useEffect(() => { run(async () => {
+    const o = await api('/v2/procurement/return-options'); setOptions(o); await load();
+    if (originalOrderId) {
+      const template = await api('/v2/procurement/orders/' + encodeURIComponent(originalOrderId) + '/return-template');
+      setEdit({ content: template.content });
+      setNotice('已带入原采购单商品及单位，请移除不退项目，并填写实际退回数量、日期和原因。');
+    }
+  }); }, [currentUser.id, originalOrderId]);
   const requestKey = body => { const value = JSON.stringify(body); if (request.current?.value !== value) request.current = { value, key: crypto.randomUUID() }; return request.current.key; };
   const save = () => run(async () => {
     const body = { content: edit.content, ...(edit.id ? { version: edit.version } : {}) };
@@ -45,7 +52,7 @@ export default function PurchaseReturnsPanel({ currentUser, stores }) {
   const lineEditor = (kind, replacement) => <div className="space-y-3"><h4 className="font-bold">{replacement ? '实际补货（可不填写）' : '实际退回商品'}</h4>{edit.content[kind].map((l, i) => <fieldset key={l.rowId} className="min-w-0 space-y-3 rounded-2xl border border-slate-200 p-3"><legend className="px-1 text-sm">{replacement ? '补货' : '退货'}第{i + 1}项</legend>
     <Field label="商品"><select className={input} aria-label={`${replacement ? '补货' : '退货'}商品${i + 1}`} value={l.itemId} onChange={e => changeLine(kind,i,'itemId',e.target.value)}><option value="">选择商品</option>{l.itemId && !options.items.some(p => p.id === l.itemId) && <option value={l.itemId}>{l.productNameSnapshot}</option>}{options.items.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
     <div className="grid min-w-0 grid-cols-2 gap-3"><Field label="实际数量"><input className={input} inputMode="decimal" aria-label={`${replacement ? '补货' : '退货'}数量${i + 1}`} value={l.quantity} onChange={e => changeLine(kind,i,'quantity',e.target.value)} placeholder="未发生请留空" /></Field><Field label="单位"><input className={input} maxLength={20} aria-label={`${replacement ? '补货' : '退货'}单位${i + 1}`} value={l.unit} onChange={e => changeLine(kind,i,'unit',e.target.value)} placeholder="如：个、盒、克" /></Field></div>
-    {replacement && <><Field label="补货接收门店"><select className={input} aria-label={`补货接收门店${i + 1}`} value={l.storeKey} onChange={e => changeLine(kind,i,'storeKey',e.target.value)}><option value="">选择可接收门店</option>{stores.filter(s => s.active === true || s.key === l.storeKey).map(s => <option key={s.key} value={s.key}>{s.name}{s.active === false ? '（已停用，仅保留原事实）' : ''}</option>)}</select></Field><Field label="实际补货日期"><input className={input} aria-label={`实际补货日期${i + 1}`} type="date" value={l.receivedDate} onChange={e => changeLine(kind,i,'receivedDate',e.target.value)} /></Field><Field label="补货备注"><textarea className={input} maxLength={2000} value={l.notes} onChange={e => changeLine(kind,i,'notes',e.target.value)} /></Field></>}
+    {replacement && <><Field label="补货接收门店"><select className={input} aria-label={`补货接收门店${i + 1}`} value={l.storeKey} onChange={e => changeLine(kind,i,'storeKey',e.target.value)}><option value="">选择可接收门店</option>{stores.filter(s => s.active === true || s.key === l.storeKey).map(s => <option key={s.key} value={s.key}>{s.name}{s.active === false ? '（已停用，仅维护已有事实）' : ''}</option>)}</select></Field><Field label="实际补货日期"><input className={input} aria-label={`实际补货日期${i + 1}`} type="date" value={l.receivedDate} onChange={e => changeLine(kind,i,'receivedDate',e.target.value)} /></Field><Field label="补货备注"><textarea className={input} maxLength={2000} value={l.notes} onChange={e => changeLine(kind,i,'notes',e.target.value)} /></Field></>}
     <button type="button" className={btn} onClick={() => update(kind,edit.content[kind].filter((_,n) => n !== i))}>移除此项</button>
   </fieldset>)}<button type="button" className={btn} onClick={() => update(kind,[...edit.content[kind],blankLine(replacement)])}>追加{replacement ? '实际补货' : '退货商品'}</button></div>;
   return <section className="min-w-0 space-y-4">

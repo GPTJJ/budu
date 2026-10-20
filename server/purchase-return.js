@@ -36,6 +36,19 @@ const handler = fn => async (req, res) => {
   }
 };
 
+async function originalOrder(tx, u, orderId) {
+  const order = await tx.procurementOrder.findUnique({ where: { id: orderId }, include: { lines: { orderBy: { linePosition: 'asc' } } } });
+  if (!order || !canAccessProcurementStore(u, order.storeKey)) throw fail('无该关联采购单权限', 403);
+  if (!['ORDERED','RECEIVING','CLOSED'].includes(order.status)) throw fail('请选择有效的已下单采购单', 409);
+  return order;
+}
+
+function completeReplacement(line) {
+  if (!line?.rowId || !line.itemId || !line.storeKey) return false;
+  try { quantity(line.quantity); unit(line.unit); date(line.receivedDate); return true; }
+  catch { return false; }
+}
+
 function projectContent(u, c) {
   if (!c) return null;
   const ownSource = canAccessProcurementStore(u, c.storeKey);
@@ -68,10 +81,10 @@ async function prepare(tx, u, raw, previous, strict = false, confirmed = null) {
   const supplier = supplierId ? await tx.procurementSupplier.findUnique({ where: { id: supplierId } }) : null;
   if (supplierId && !supplier) throw fail('供应商不存在');
   const originalOrderId = text(c.originalOrderId, 100);
+  let order = null;
   if (originalOrderId) {
-    const order = await tx.procurementOrder.findUnique({ where: { id: originalOrderId } });
-    if (!order || !canAccessProcurementStore(u, order.storeKey)) throw fail('无该关联采购单权限', 403);
-    if (order.supplierId !== supplierId || order.storeKey !== storeKey || ['DRAFT','CANCELLED'].includes(order.status)) throw fail('关联采购单须为同供应商、同来源门店的有效订单');
+    order = await originalOrder(tx, u, originalOrderId);
+    if (order.supplierId !== supplierId || order.storeKey !== storeKey) throw fail('关联采购单须为同供应商、同来源门店的有效订单');
   }
   const itemIds = [...new Set([...rows, ...replacementRows].map(l => text(l.itemId, 100)).filter(Boolean))].sort();
   for (const itemId of itemIds) await tx.$queryRawUnsafe('SELECT id FROM "InventoryItem" WHERE id=$1 FOR SHARE', itemId);
@@ -87,16 +100,21 @@ async function prepare(tx, u, raw, previous, strict = false, confirmed = null) {
     if (strict || un) unit(un);
     if (strict && !itemId) throw fail('请完整选择商品');
     const prior = (replacement ? previous?.replacements : previous?.items)?.find(p => p.rowId === rowId && p.itemId === itemId);
-    const line = { rowId, itemId, productNameSnapshot: prior?.productNameSnapshot || masters.get(itemId)?.name || '', quantity: qty, unit: un };
+    const originalLine = !replacement && order?.lines.find(p => p.inventoryItemId === itemId);
+    const line = { rowId, itemId, productNameSnapshot: prior?.productNameSnapshot || originalLine?.productNameSnapshot || masters.get(itemId)?.name || '', quantity: qty, unit: un };
     if (replacement) {
       const receivedDate = text(l.receivedDate, 10), receivingStore = text(l.storeKey, 100);
       if (strict || receivedDate) date(receivedDate);
       if (strict && !receivingStore) throw fail('请选择补货接收门店');
-      // Existing historical receipts remain editable after store closure. New or changed
-      // receipt facts require a currently operating receiving store.
+      // Trust this record's persisted row, never a client-supplied historical flag.
+      // A complete saved fact can be submitted/corrected after closure, provided
+      // its receiving store is unchanged. Empty placeholders and new/copied IDs
+      // cannot establish this permission. A changed receiving store is always new.
+      const savedLine = previous?.replacements?.find(p => p.rowId === rowId);
       const confirmedLine = confirmed?.replacements?.find(p => p.rowId === rowId);
-      const sameFact = confirmedLine && ['itemId','quantity','unit','storeKey','receivedDate'].every(k => confirmedLine[k] === l[k]);
-      if (receivingStore && !sameFact && stores.get(receivingStore)?.active !== true) throw fail('补货接收门店已停用，请选择可接收门店', 409);
+      const historical = savedLine?.storeKey === receivingStore && (completeReplacement(savedLine)
+        || confirmedLine?.storeKey === receivingStore && completeReplacement(confirmedLine));
+      if (receivingStore && !historical && stores.get(receivingStore)?.active !== true) throw fail('补货接收门店已停用，请选择可接收门店', 409);
       Object.assign(line, { storeKey: receivingStore, storeNameSnapshot: prior?.storeKey === receivingStore ? prior.storeNameSnapshot : stores.get(receivingStore)?.name || '', receivedDate, notes: text(l.notes) });
     }
     return line;
@@ -107,11 +125,19 @@ async function prepare(tx, u, raw, previous, strict = false, confirmed = null) {
     if (!supplier || !rows.length) throw fail('请填写供应商及实际退回商品');
     reason(why);
   }
-  return { supplierId, supplierNameSnapshot: previous?.supplierId === supplierId ? previous.supplierNameSnapshot : supplier?.name || '',
-    storeKey, storeNameSnapshot: previous?.storeKey === storeKey ? previous.storeNameSnapshot : stores.get(storeKey).name,
+  return { supplierId, supplierNameSnapshot: previous?.supplierId === supplierId ? previous.supplierNameSnapshot : order?.supplierNameSnapshot || supplier?.name || '',
+    storeKey, storeNameSnapshot: previous?.storeKey === storeKey ? previous.storeNameSnapshot : order?.storeNameSnapshot || stores.get(storeKey).name,
     originalOrderId, returnedDate, reason: why, notes: text(c.notes),
     items: rows.map(l => normalize(l, false)), replacements: replacementRows.map(l => normalize(l, true)) };
 }
+
+purchaseReturnRouter.get('/procurement/orders/:id/return-template', handler(req => prisma.$transaction(async tx => {
+  const u = await procurementActor(tx, req.user, true), order = await originalOrder(tx, u, req.params.id);
+  return { content: { supplierId: order.supplierId, supplierNameSnapshot: order.supplierNameSnapshot,
+    storeKey: order.storeKey, storeNameSnapshot: order.storeNameSnapshot, originalOrderId: order.id,
+    returnedDate: '', reason: '', notes: '', replacements: [],
+    items: order.lines.map(l => ({ rowId: id('line'), itemId: l.inventoryItemId, productNameSnapshot: l.productNameSnapshot, unit: l.unitSnapshot, quantity: '' })) } };
+}, { isolationLevel: 'RepeatableRead', timeout: 15000 })));
 
 async function retainProductRefs(tx, r) {
   const ids = [...new Set([r.content, r.confirmedContent].filter(Boolean).flatMap(c => [...c.items, ...c.replacements].map(l => l.itemId)).filter(Boolean))];

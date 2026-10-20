@@ -77,15 +77,23 @@ export function projectProcurementHistory(u, orders, returns, f) {
     }
   }
   if (purchases.length + events.length > LIMIT * 2) throw fail('匹配明细超出导出限制，请缩小查询范围；未导出任何文件', 413);
-  const groups = new Map();
+  const groups = new Map(), nameKeys = new Map();
   for (const row of [...purchases, ...events]) {
     if (!row.counted) continue;
     const groupKey = JSON.stringify([row.supplierId, row.storeKey, row.itemId, row.unit]);
     if (!groups.has(groupKey)) groups.set(groupKey, { supplierName: row.supplierName, storeName: row.storeName, itemName: row.itemName, unit: row.unit, ordered: '0', received: '0', returned: '0', replacement: '0' });
     const g = groups.get(groupKey), field = { ORDER: 'ordered', RECEIPT: 'received', RETURN: 'returned', REPLACEMENT: 'replacement' }[row.type];
+    // Latest matching valid business fact owns the group's display snapshot.
+    // Type + stable row ID break same-day ties, independent of DB return order.
+    const nameKey = [row.date, row.type, row.id].join('\0');
+    if (!nameKeys.has(groupKey) || nameKey > nameKeys.get(groupKey)) {
+      Object.assign(g, { supplierName: row.supplierName, storeName: row.storeName, itemName: row.itemName });
+      nameKeys.set(groupKey, nameKey);
+    }
     g[field] = sum([g[field], row.quantity]);
   }
-  return { filters: f, purchases: sortRows(purchases), events: sortRows(events), summary: [...groups.values()].sort((a,b) => [a.supplierName,a.storeName,a.itemName,a.unit].join('\0').localeCompare([b.supplierName,b.storeName,b.itemName,b.unit].join('\0'), 'zh-CN')),
+  const summary = [...groups.entries()].sort(([aId,a],[bId,b]) => [a.supplierName,a.storeName,a.itemName,a.unit].join('\0').localeCompare([b.supplierName,b.storeName,b.itemName,b.unit].join('\0'), 'zh-CN') || aId.localeCompare(bId)).map(([,group]) => group);
+  return { filters: f, purchases: sortRows(purchases), events: sortRows(events), summary,
     complete: true, totalRows: purchases.length + events.length };
 }
 
