@@ -6,6 +6,8 @@ import { closedStoreMessage } from '../utils/selectors';
 import { canManageProcurement, isProcurementDeveloper } from '../../shared/accountPermissions';
 import { exportPurchaseImage } from '../utils/purchaseReceiptExport';
 import { takeNotificationRecordFocus } from '../utils/notificationNavigation';
+import PurchaseReturnsPanel from './PurchaseReturnsPanel';
+import ProcurementHistoryPanel from './ProcurementHistoryPanel';
 const labels = {
   DRAFT: '准备中',
   ORDERED: '待收货',
@@ -296,7 +298,9 @@ export default function PurchaseReceiptPage({
       }}>采购单</button>{manage && <button className={btn} onClick={() => {
         setTab('suppliers');
         setDetail(null);
-      }}>采购供应商</button>}</div>
+      }}>采购供应商</button>}<button className={btn} onClick={() => { setTab('returns'); setDetail(null); }}>退货记录</button><button className={btn} onClick={() => { setTab('history'); setDetail(null); }}>历史查询／Excel</button></div>
+ {tab === 'returns' && <PurchaseReturnsPanel currentUser={currentUser} stores={stores} />}
+ {tab === 'history' && <ProcurementHistoryPanel currentUser={currentUser} stores={stores} />}
  {tab === 'suppliers' && <section className="space-y-3"><button className={primary} onClick={() => editSupplier()}>新建采购供应商</button>{suppliers.map(s => <article key={s.id} className="rounded-2xl border bg-white p-4"><p className="break-words font-bold">{s.name}</p><p className="mt-2 text-sm">{s.products.map(x => x.name).join('、') || '尚未绑定商品'}</p><button className={btn + ' mt-3'} onClick={() => editSupplier(s)}>维护供应商</button></article>)}</section>}
  {tab === 'orders' && !detail && <><div className="flex flex-wrap gap-2">{manage && <button className={primary} onClick={() => editDraft()}>新建备单</button>}<select aria-label="筛选门店" className={input + ' !w-auto'} value={storeFilter} onChange={e => setStoreFilter(e.target.value)}><option value="">授权门店</option>{stores.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</select><select aria-label="筛选状态" className={input + ' !w-auto'} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="">全部状态</option>{Object.entries(labels).slice(0, 5).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>{list.map(o => <button key={o.id} onClick={() => run(() => openDetail(o.id))} className="block w-full rounded-2xl border border-slate-100 bg-white p-4 text-left"><p className="break-words font-bold">{o.supplierNameSnapshot || '未选供应商'}</p><p className="mt-2 text-sm">{o.storeNameSnapshot || '未选门店'} · {labels[o.status]}</p></button>)}</>}
  {detail && tab === 'orders' && <section className="space-y-4">

@@ -4,7 +4,9 @@ import { assertOperatingStore } from './store-operation-policy.js';
 import { canUseProcurement, canManageProcurement, canAccessProcurementStore, isProcurementDeveloper, hasModuleAccess, MODULE_KEYS, normalizeAccountPermissions } from '../shared/accountPermissions.js';
 import { fail, id, json, digest, quantity, unit, date, reason, key, version, open, unique, sum } from './purchase-receipt-core.js';
 import { createReceiptNotice, deliverReceiptNotice, receiptDeliverySummary } from './purchase-receipt-notification.js';
+import { purchaseReturnRouter } from './purchase-return.js';
 export const purchaseReceiptRouter = Router();
+purchaseReceiptRouter.use(purchaseReturnRouter);
 const include = {
   lines: {
     orderBy: {

@@ -323,6 +323,7 @@ model InventoryItem {
   procurementSupplierId String?
   procurementSupplier ProcurementSupplier? @relation(fields: [procurementSupplierId], references: [id], onDelete: Restrict)
   procurementLines ProcurementOrderLine[]
+  procurementReturnProducts ProcurementReturnProduct[]
   id                       String                     @id
   name                     String                     @unique
   unit                     String                     @default("")
@@ -2812,6 +2813,7 @@ model ProcurementAudit {
   createdAt    DateTime @default(now())
 
   @@index([orderId, createdAt])
+  @@index([entityId, createdAt])
 }
 
 model ProcurementNotificationEvent {
@@ -2827,4 +2829,39 @@ model ProcurementNotificationEvent {
   receipt            ProcurementReceipt @relation(fields: [receiptId], references: [id], onDelete: Restrict)
 
   @@unique([receiptId, submissionRevision, recipientUserId])
+}
+
+// Current revision and last confirmed facts are separate. Reopening never erases facts.
+model ProcurementReturn {
+  id                   String   @id
+  number               String   @unique
+  status               String   @default("PROCESSING")
+  version              Int      @default(1)
+  content              Json
+  confirmedContent     Json?
+  storeKeys            String[]
+  createdById          String
+  createdByName        String
+  submittedByName      String?
+  submittedAt          DateTime?
+  confirmedById        String?
+  confirmedByName      String?
+  confirmedAt          DateTime?
+  createRequestKey     String   @unique
+  createPayloadHash    String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  products             ProcurementReturnProduct[]
+
+  @@index([status, createdAt])
+  @@index([storeKeys], type: Gin)
+}
+
+// Retain stable product references for both current and confirmed snapshots.
+model ProcurementReturnProduct {
+  returnId String
+  itemId   String
+  record   ProcurementReturn @relation(fields: [returnId], references: [id], onDelete: Restrict)
+  item     InventoryItem     @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  @@id([returnId, itemId])
 }
