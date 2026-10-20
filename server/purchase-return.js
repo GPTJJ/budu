@@ -49,6 +49,29 @@ function completeReplacement(line) {
   catch { return false; }
 }
 
+async function historicalReplacementStores(tx, record) {
+  // Only server-written snapshots of this locked record can establish eligibility.
+  // Replay versions rather than timestamps: several revisions can share a timestamp.
+  const audits = await tx.procurementAudit.findMany({ where: { entityId: record.id, action: { startsWith: 'RETURN_' } }, select: { after: true } });
+  const snapshots = audits.map(a => a.after).filter(s => s?.id === record.id && Number.isInteger(s.version) && s.version > 0 && s.version <= record.version)
+    .sort((a, b) => a.version - b.version);
+  let stores = new Map(), previousVersion = 0;
+  for (const snapshot of snapshots) {
+    // Missing audit revisions cannot prove that the same row/store survived.
+    if (snapshot.version !== previousVersion + 1) stores.clear();
+    const next = new Map();
+    for (const line of snapshot.content?.replacements || []) {
+      const priorStore = stores.get(line.rowId);
+      if (completeReplacement(line)) next.set(line.rowId, line.storeKey);
+      else if (priorStore && (!line.storeKey || line.storeKey === priorStore)) next.set(line.rowId, priorStore);
+    }
+    // Removing a row or selecting another store ends its old eligibility.
+    stores = next;
+    previousVersion = snapshot.version;
+  }
+  return previousVersion === record.version ? stores : new Map();
+}
+
 function projectContent(u, c) {
   if (!c) return null;
   const ownSource = canAccessProcurementStore(u, c.storeKey);
@@ -65,7 +88,7 @@ export function presentReturn(u, r) {
     confirmedByName: r.confirmedByName, confirmedAt: r.confirmedAt, canEdit: fullReturnScope(u, r) };
 }
 
-async function prepare(tx, u, raw, previous, strict = false, confirmed = null) {
+async function prepare(tx, u, raw, previous, strict = false, historicalStores = new Map()) {
   const c = raw || {};
   const storeKey = text(c.storeKey, 100), supplierId = text(c.supplierId, 100);
   // A source store is required even in a partial draft, to establish its permission scope.
@@ -106,14 +129,11 @@ async function prepare(tx, u, raw, previous, strict = false, confirmed = null) {
       const receivedDate = text(l.receivedDate, 10), receivingStore = text(l.storeKey, 100);
       if (strict || receivedDate) date(receivedDate);
       if (strict && !receivingStore) throw fail('请选择补货接收门店');
-      // Trust this record's persisted row, never a client-supplied historical flag.
-      // A complete saved fact can be submitted/corrected after closure, provided
-      // its receiving store is unchanged. Empty placeholders and new/copied IDs
-      // cannot establish this permission. A changed receiving store is always new.
+      // A partial revision keeps this row's server-proven receiving store. Client
+      // flags, new/copied IDs and a changed receiving store cannot grant access.
       const savedLine = previous?.replacements?.find(p => p.rowId === rowId);
-      const confirmedLine = confirmed?.replacements?.find(p => p.rowId === rowId);
-      const historical = savedLine?.storeKey === receivingStore && (completeReplacement(savedLine)
-        || confirmedLine?.storeKey === receivingStore && completeReplacement(confirmedLine));
+      const historicalStore = completeReplacement(savedLine) ? savedLine.storeKey : historicalStores.get(rowId);
+      const historical = savedLine && (!savedLine.storeKey || savedLine.storeKey === receivingStore) && historicalStore === receivingStore;
       if (receivingStore && !historical && stores.get(receivingStore)?.active !== true) throw fail('补货接收门店已停用，请选择可接收门店', 409);
       Object.assign(line, { storeKey: receivingStore, storeNameSnapshot: prior?.storeKey === receivingStore ? prior.storeNameSnapshot : stores.get(receivingStore)?.name || '', receivedDate, notes: text(l.notes) });
     }
@@ -207,12 +227,13 @@ for (const action of ['save','submit','withdraw','return','confirm','reopen']) p
   if (r.status !== expected) throw fail('记录状态已变化，请刷新后重试', 409);
   const why = ['return','reopen'].includes(action) ? reason(req.body.reason) : '';
   const data = { version: { increment: 1 } };
+  const historicalStores = ['save','submit'].includes(action) ? await historicalReplacementStores(tx, r) : new Map();
   if (action === 'save') {
-    data.content = await prepare(tx, u, req.body.content, r.content, false, r.confirmedContent);
+    data.content = await prepare(tx, u, req.body.content, r.content, false, historicalStores);
     data.storeKeys = [...new Set([...contentStores(data.content), ...contentStores(r.confirmedContent)])];
   }
   if (action === 'submit') {
-    await prepare(tx, u, r.content, r.content, true, r.confirmedContent);
+    await prepare(tx, u, r.content, r.content, true, historicalStores);
     Object.assign(data, { status: 'PENDING', submittedByName: u.username, submittedAt: new Date() });
   }
   if (['withdraw','return','reopen'].includes(action)) data.status = 'PROCESSING';
