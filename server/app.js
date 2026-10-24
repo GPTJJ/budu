@@ -21,6 +21,7 @@ import { payrollNoticeRouter } from './payroll-notice.js'
 import { approvalRouter, ensureApprovalTemplates } from './approvals.js'
 import { notificationRouter } from './notifications.js'
 import { customerRequestRouter, publicCustomerRequestRouter } from './customer-requests.js'
+import { createStoreServiceStaffRouter } from './store-service-api.js'
 import { redactCustomerRequestUrl } from './customer-request-core.js'
 import { wechatBindCallbackRouter, wechatBindRouter, wechatRecvRouter } from './wechat-bind.js'
 import { ensureNotificationTemplates } from './notification-center.js'
@@ -285,7 +286,7 @@ export function createCompatibilityProcurementGate(requireBusiness, requireModul
   }
 }
 
-export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUsers, disableStartupTasks = false } = {}) {
+export function createApp({ onlineCheckoutRuntime = null, storeServiceRuntime = null, partnerDomainMirrorUsers, disableStartupTasks = false } = {}) {
   if (disableStartupTasks && APP_ENV !== 'test') throw new Error('C11 startup-task suppression requires APP_ENV=test')
   const runtimeMode = process.env.BUDU_RUNTIME_MODE ?? 'active'
   if (!['active', 'standby'].includes(runtimeMode)) throw new Error('BUDU_RUNTIME_MODE_INVALID')
@@ -302,6 +303,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     next()
   })
   onlineCheckoutRuntime?.mount(app)
+  storeServiceRuntime?.mount(app)
   app.use(express.json({ limit: '15mb' }))
   app.use(cookieParser())
   // 请求级结构化日志（只记录方法/路径/状态/耗时/requestId，不记录 body）
@@ -761,7 +763,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
   app.use('/api/v2', requireBusiness, payrollAuditAdminRouter)
   app.use('/api/v2', sweetCardAvailabilityRouter)
   app.use('/api/v2', sweetCardRouter)
-  app.use('/api/v2', requireBusiness, storeClosureRouter, storeManagementRouter, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, purchaseReceiptRouter, v2Router)
+  app.use('/api/v2', requireBusiness, storeClosureRouter, storeManagementRouter, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, createStoreServiceStaffRouter({ db: prisma }), customerRequestRouter, wechatBindRouter, purchaseReceiptRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {

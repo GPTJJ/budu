@@ -6,6 +6,8 @@ import { t } from '../utils/text'
 import QrCodeModal from './QrCodeModal'
 import { takeNotificationRecordFocus } from '../utils/notificationNavigation'
 import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
+import StoreServiceAction from './StoreServiceAction'
+import StoreServiceConversion from './StoreServiceConversion'
 
 const inputCls = 'input'
 
@@ -424,7 +426,8 @@ export default function InvoicePage({ currentUser, onBack }) {
               </div>
               <span className="hidden shrink-0 text-sm font-bold tabular-nums text-slate-800 sm:block">¥{yuan(r.amountCents)}</span>
 
-              <div className="mt-3 flex items-stretch gap-2 sm:mt-0 sm:items-center">
+              <div className="mt-3 flex flex-wrap items-stretch gap-2 sm:mt-0 sm:items-center">
+                <StoreServiceAction record={r} type="INVOICE" currentUser={currentUser} onUpdated={load} />
                 {tab === 'pending' && (
                   <button
                     onClick={(e) => {
@@ -462,6 +465,7 @@ export default function InvoicePage({ currentUser, onBack }) {
           )}
         </div>
       </div>
+      <StoreServiceConversion currentUser={currentUser} initialType="INVOICE" />
     </div>
   )
 }

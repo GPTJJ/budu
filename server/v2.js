@@ -1803,7 +1803,9 @@ v2Router.get('/invoices', wrap(async (req, res) => {
   }
   if (status === 'pending' || status === 'done') where.status = status
   const rows = await prisma.invoice.findMany({ where, orderBy: { createdAt: 'desc' }, take: 1000 })
-  res.json({ rows: rows.map(serializeInvoice) })
+  const services = await prisma.customerServiceRequest.findMany({ where: { type: 'INVOICE', linkedBusinessRecordId: { in: rows.map(r => r.id) } }, select: { id: true, linkedBusinessRecordId: true, customerUserId: true } })
+  const serviceMap = new Map(services.map(r => [r.linkedBusinessRecordId, r]))
+  res.json({ rows: rows.map(r => ({ ...serializeInvoice(r), serviceRequestId: serviceMap.get(r.id)?.id || null, customerBound: Boolean(serviceMap.get(r.id)?.customerUserId) })) })
 }))
 
 v2Router.post('/invoices', wrap(async (req, res) => {
@@ -1885,7 +1887,7 @@ v2Router.get('/mailing-records', wrap(async (req, res) => {
   const status = String(req.query.status || '')
   const from = String(req.query.from || '')
   const to = String(req.query.to || '')
-  const where = { deletedAt: null }
+  const where = { deletedAt: null, storeKey: whereStores(req.user) }
   if (status === 'pending' || status === 'shipped') where.status = status
   if (/^\d{4}-\d{2}-\d{2}$/.test(from) || /^\d{4}-\d{2}-\d{2}$/.test(to)) {
     where.createdAt = {}
@@ -1894,7 +1896,9 @@ v2Router.get('/mailing-records', wrap(async (req, res) => {
     if (where.createdAt.lt) where.createdAt.lt = new Date(where.createdAt.lt.getTime() + 86400000)
   }
   const rows = await prisma.mailingRecord.findMany({ where, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], take: 2000 })
-  res.json({ rows: rows.map(serializeMailingRecord) })
+  const services = await prisma.customerServiceRequest.findMany({ where: { type: 'MAILING', linkedBusinessRecordId: { in: rows.map(r => r.id) } }, select: { id: true, linkedBusinessRecordId: true, customerUserId: true } })
+  const serviceMap = new Map(services.map(r => [r.linkedBusinessRecordId, r]))
+  res.json({ rows: rows.map(r => ({ ...serializeMailingRecord(r), serviceRequestId: serviceMap.get(r.id)?.id || null, customerBound: Boolean(serviceMap.get(r.id)?.customerUserId) })) })
 }))
 
 v2Router.post('/mailing-records', wrap(async (req, res) => {
@@ -1947,8 +1951,11 @@ v2Router.post('/mailing-records/:id/ship', wrap(async (req, res) => {
   if (!canMailing(req.user)) throw bad('无权限', 403)
   const row = await prisma.mailingRecord.findUnique({ where: { id: req.params.id } })
   if (!row) throw bad('发件记录不存在', 404)
+  if (!canStore(req.user, row.storeKey)) throw bad('无权限', 403)
   if (row.deletedAt) throw bad('已删除邮寄记录不可继续操作', 409)
   if (row.status !== 'pending') throw bad('该记录已发货', 409)
+  const service = await prisma.customerServiceRequest.findUnique({ where: { linkedBusinessRecordId: row.id } })
+  if (service?.customerUserId) throw bad('请由开发者通过申请详情确认发货并通知顾客', 409)
   const updated = await prisma.$transaction(async (tx) => {
     await assertClosedStoreMaintenance(tx, [row.storeKey], req.user)
     return tx.mailingRecord.update({

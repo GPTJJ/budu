@@ -1422,6 +1422,23 @@ model CustomerServiceRequest {
   store                  Store                         @relation(fields: [storeKey], references: [key], onDelete: Restrict)
   createdBy              User?                         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   tokens                 CustomerServiceRequestToken[]
+  customerUserId         String? @map("customer_user_id")
+  customerAppId          String? @map("customer_app_id")
+  customerEnvId          String? @map("customer_env_id")
+  customerOpenId         String? @map("customer_open_id")
+  subscriptionChoice     String? @map("subscription_choice")
+  subscriptionTemplateId String? @map("subscription_template_id")
+  receiptConfirmedAt     DateTime? @map("receipt_confirmed_at")
+  receiptConfirmedBy     String? @map("receipt_confirmed_by")
+  shipmentConfirmedAt    DateTime? @map("shipment_confirmed_at")
+  shipmentConfirmedBy    String? @map("shipment_confirmed_by")
+  carrier                String?
+  trackingNo             String? @map("tracking_no")
+  deliveryProof          String? @map("delivery_proof")
+  shipmentVersion        Int @default(0) @map("shipment_version")
+
+  @@index([customerUserId, customerAppId, customerEnvId, submittedAt, id], map: "customer_service_requests_customer_scope_idx")
+
 
   @@index([type, status, createdAt])
   @@index([storeKey, status, createdAt])
@@ -1436,6 +1453,7 @@ model CustomerServiceRequestToken {
   id            String                 @id
   requestId     String                 @map("request_id")
   tokenHash     String                 @unique @map("token_hash")
+  miniSceneHash String?                @unique @map("mini_scene_hash")
   status        String                 @default("ACTIVE")
   expiresAt     DateTime               @map("expires_at")
   consumedAt    DateTime?              @map("consumed_at")
@@ -2864,4 +2882,51 @@ model ProcurementReturnProduct {
   record   ProcurementReturn @relation(fields: [returnId], references: [id], onDelete: Restrict)
   item     InventoryItem     @relation(fields: [itemId], references: [id], onDelete: Restrict)
   @@id([returnId, itemId])
+}
+
+// Append-only business audit; retained independently of the source application.
+model StoreServiceAudit {
+  id String @id
+  requestId String @map("request_id")
+  actorId String @map("actor_id")
+  action String
+  reason String @default("")
+  detail Json @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([requestId, createdAt])
+  @@map("store_service_audits")
+}
+model StoreServiceDelivery {
+  id String @id
+  requestId String @map("request_id")
+  event String
+  version Int @default(1)
+  userId String @map("user_id")
+  appId String @map("app_id")
+  envId String @map("env_id")
+  openId String @map("open_id")
+  channel String @default("WECHAT_SUBSCRIBE")
+  templateId String? @map("template_id")
+  status String @default("PENDING")
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at")
+  claimedAt DateTime? @map("claimed_at")
+  claimId String? @map("claim_id")
+  platformCode String? @map("platform_code")
+  acceptedAt DateTime? @map("accepted_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  @@unique([requestId, event, version, userId, channel], map: "store_service_delivery_event_key")
+  @@index([status, nextAttemptAt])
+  @@map("store_service_deliveries")
+}
+model StoreServiceVisit {
+  id String @id
+  requestId String @map("request_id")
+  userId String @map("user_id")
+  event String
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([requestId, userId, event])
+  @@index([event, createdAt])
+  @@map("store_service_visits")
 }

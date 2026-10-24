@@ -1,29 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { BarcodeFormat, EncodeHintType, QRCodeWriter } from '@zxing/library'
+import { useEffect, useState } from 'react'
 import { Check, Copy, Loader2, RefreshCw, ShieldCheck, X } from 'lucide-react'
-
-function drawQr(canvas, value) {
-  const writer = new QRCodeWriter()
-  const hints = new Map([[EncodeHintType.MARGIN, 1]])
-  const matrix = writer.encode(value, BarcodeFormat.QR_CODE, 320, 320, hints)
-  const width = matrix.getWidth()
-  const height = matrix.getHeight()
-  canvas.width = width
-  canvas.height = height
-  const context = canvas.getContext('2d')
-  const image = context.createImageData(width, height)
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const offset = (y * width + x) * 4
-      const color = matrix.get(x, y) ? 24 : 255
-      image.data[offset] = color
-      image.data[offset + 1] = color
-      image.data[offset + 2] = color
-      image.data[offset + 3] = 255
-    }
-  }
-  context.putImageData(image, 0, 0)
-}
+import CustomerServiceQr from './CustomerServiceQr'
 
 const expiryLabel = (value) => {
   const date = new Date(value)
@@ -32,13 +9,7 @@ const expiryLabel = (value) => {
 }
 
 export default function QrCodeModal({ open, title, description, request, loading, error, onRegenerate, onCancel, onClose }) {
-  const canvasRef = useRef(null)
   const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    if (!open || !request?.publicUrl || !canvasRef.current) return
-    drawQr(canvasRef.current, request.publicUrl)
-  }, [open, request?.publicUrl])
 
   useEffect(() => {
     if (!open) setCopied(false)
@@ -78,7 +49,7 @@ export default function QrCodeModal({ open, title, description, request, loading
               正在生成安全二维码…
             </div>
           ) : request?.publicUrl ? (
-            <canvas ref={canvasRef} data-testid="customer-request-qr" className="aspect-square w-full max-w-64 rounded-2xl bg-white p-2 shadow-sm" aria-label="顾客填写二维码" />
+            <CustomerServiceQr request={request} />
           ) : (
             <p className="text-sm text-rose-500">{error || '二维码生成失败，请重试'}</p>
           )}
@@ -99,7 +70,7 @@ export default function QrCodeModal({ open, title, description, request, loading
           </button>
           <button type="button" onClick={copyLink} disabled={!request?.publicUrl} className="btn-primary min-h-11 whitespace-nowrap px-3">
             {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied ? '已复制' : '复制链接'}
+            {copied ? '已复制' : '复制网页链接'}
           </button>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2">

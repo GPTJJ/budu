@@ -9,6 +9,7 @@ import * as Sentry from '@sentry/node'
 import { prisma } from './pg.js'
 import { loadOnlineCheckoutConfig } from './online-checkout-config.js'
 import { createOnlineCheckoutRuntime } from './online-checkout-runtime.js'
+import { loadStoreServiceConfig, createStoreServiceRuntime } from './store-service-api.js'
 
 if (process.env.SENTRY_DSN) {
   Sentry.init({
@@ -28,8 +29,11 @@ if (process.env.SENTRY_DSN) {
 }
 
 let onlineCheckoutRuntime = null
+let storeServiceRuntime = null
 try {
   validateConfig()
+  const serviceConfig = loadStoreServiceConfig()
+  if (serviceConfig) storeServiceRuntime = createStoreServiceRuntime({ db: prisma, config: serviceConfig })
   const configuration = loadOnlineCheckoutConfig()
   if (configuration) onlineCheckoutRuntime = createOnlineCheckoutRuntime({db:prisma,...configuration})
 } catch (error) {
@@ -43,7 +47,7 @@ if (!['active', 'standby'].includes(runtimeMode)) {
   process.exit(1)
 }
 const PORT = Number(process.env.PORT || 3000)
-const app = createApp({onlineCheckoutRuntime})
+const app = createApp({onlineCheckoutRuntime, storeServiceRuntime})
 const runtime = app.locals.buduRuntime
 let backgroundStarted = false
 function startProcessBackgroundTasks() {
@@ -51,6 +55,7 @@ function startProcessBackgroundTasks() {
   backgroundStarted = true
   runtime.processTasksStarted += 1
   onlineCheckoutRuntime?.start()
+  storeServiceRuntime?.start()
   console.log(`BUDU server: http://localhost:${PORT}`)
   console.log(`env=${APP_ENV} version=${APP_VERSION} sha=${GIT_SHA || 'local'}`)
   console.log(`局域网访问: http://<本机IP>:${PORT}（可用 ipconfig 查看）`)

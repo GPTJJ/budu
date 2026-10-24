@@ -238,18 +238,27 @@ function notificationData(type, request, businessRecordId) {
   }
 }
 
-export async function submitCustomerServiceRequest({ prismaClient = prisma, token, payload, now = new Date() }) {
-  const tokenHash = hashCustomerToken(token)
+export async function submitCustomerServiceRequest({ prismaClient = prisma, token, payload, now = new Date(), customerIdentity = null, miniScene = '', subscription = null, deliverInternal = true }) {
+  // customerIdentity is supplied only by the authenticated server router, never req.body.
+  const mini = Boolean(customerIdentity)
+  const sceneHash = mini && /^[a-f0-9]{32}$/.test(miniScene) ? crypto.createHash('sha256').update(miniScene).digest('hex') : ''
+  const tokenHash = mini ? sceneHash : hashCustomerToken(token)
   if (!tokenHash) throw httpError('二维码无效或已失效', 404)
   let committed
   try {
     committed = await prismaClient.$transaction(async (tx) => {
+      // Serialize both H5 and MiniProgram consumption on the SAME token row.
+      await tx.$queryRawUnsafe(`SELECT id FROM customer_service_request_tokens WHERE ${mini ? 'mini_scene_hash' : 'token_hash'} = $1 FOR UPDATE`, tokenHash)
       const tokenRow = await tx.customerServiceRequestToken.findUnique({
-        where: { tokenHash },
+        where: mini ? { miniSceneHash: tokenHash } : { tokenHash },
         include: { request: true },
       })
       if (!tokenRow) throw httpError('二维码无效或已失效', 404)
       if (tokenRow.request.status === CUSTOMER_REQUEST_STATUS.SUBMITTED || tokenRow.status === 'CONSUMED') {
+        const r = tokenRow.request
+        if (mini && r.customerUserId === customerIdentity.userId && r.customerAppId === customerIdentity.appId && r.customerEnvId === customerIdentity.envId) {
+          return { replay: true, requestId: r.id, type: r.type }
+        }
         throw httpError('该资料已经提交，请勿重复提交', 409)
       }
       if (tokenRow.status !== 'ACTIVE' || tokenRow.request.status !== CUSTOMER_REQUEST_STATUS.WAITING) {
@@ -270,7 +279,10 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
       })
       const requestClaim = await tx.customerServiceRequest.updateMany({
         where: { id: tokenRow.requestId, status: CUSTOMER_REQUEST_STATUS.WAITING, expiresAt: { gt: now } },
-        data: { status: CUSTOMER_REQUEST_STATUS.SUBMITTED, submittedAt: now, updatedAt: now },
+        data: { status: CUSTOMER_REQUEST_STATUS.SUBMITTED, submittedAt: now, updatedAt: now,
+          ...(mini ? { customerUserId: customerIdentity.userId, customerAppId: customerIdentity.appId,
+            customerEnvId: customerIdentity.envId, customerOpenId: customerIdentity.openId,
+            subscriptionChoice: subscription?.status || 'unavailable', subscriptionTemplateId: subscription?.templateId || null } : {}) },
       })
       if (tokenClaim.count !== 1 || requestClaim.count !== 1) {
         throw httpError('该资料已经提交，请勿重复提交', 409)
@@ -333,8 +345,15 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
         where: { id: tokenRow.requestId },
         data: { linkedBusinessRecordId: businessRecord.id, updatedAt: now },
       })
+      let notificationRequest = tokenRow.request
+      if (mini) {
+        const developer = await tx.user.findFirst({ where: { role: 'developer', status: 'active' }, orderBy: { id: 'asc' }, select: { username: true } })
+        if (!developer) throw httpError('服务处理人员暂未配置', 503)
+        notificationRequest = { ...tokenRow.request, handlerUsername: developer.username }
+        await tx.customerServiceRequest.update({ where: { id: tokenRow.requestId }, data: { handlerUsername: developer.username } })
+      }
       const notification = await tx.notification.create({
-        data: notificationData(tokenRow.request.type, tokenRow.request, businessRecord.id),
+        data: notificationData(tokenRow.request.type, notificationRequest, businessRecord.id),
       })
       await tx.notificationDelivery.create({
         data: { id: uid('nld'), notificationId: notification.id, channel: 'inapp', status: 'sent' },
@@ -360,7 +379,7 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
     if (error?.code === 'P2034') throw httpError('该资料已经提交，请勿重复提交', 409)
     throw error
   }
-  deliverCustomerRequestWecom({
+  if (!committed.replay && deliverInternal) deliverCustomerRequestWecom({
     prismaClient,
     notification: committed.notification,
     requestId: committed.requestId,
@@ -371,7 +390,7 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
   }).catch(() => {
     console.error('[customer-request-wecom] delivery failed')
   })
-  return { ok: true, type: committed.type, status: CUSTOMER_REQUEST_STATUS.SUBMITTED }
+  return { ok: true, type: committed.type, status: CUSTOMER_REQUEST_STATUS.SUBMITTED, ...(mini ? { requestId: committed.requestId } : {}) }
 }
 
 export async function cancelCustomerServiceRequest({ prismaClient = prisma, requestId, user, now = new Date() }) {
@@ -379,16 +398,13 @@ export async function cancelCustomerServiceRequest({ prismaClient = prisma, requ
   if (!request) throw httpError('顾客请求不存在', 404)
   if (!canUseType(user, request.type) || !canUseStore(user, request.storeKey)) throw httpError('无权限', 403)
   if (request.status !== CUSTOMER_REQUEST_STATUS.WAITING) throw httpError('该二维码已不能取消', 409)
-  await prismaClient.$transaction([
-    prismaClient.customerServiceRequestToken.updateMany({
-      where: { requestId, status: 'ACTIVE' },
-      data: { status: 'INVALIDATED', invalidatedAt: now },
-    }),
-    prismaClient.customerServiceRequest.update({
-      where: { id: requestId },
-      data: { status: CUSTOMER_REQUEST_STATUS.CANCELLED, cancelledAt: now, updatedAt: now },
-    }),
-  ])
+  await prismaClient.$transaction(async tx => {
+    await tx.$queryRawUnsafe('SELECT id FROM customer_service_request_tokens WHERE request_id = $1 FOR UPDATE', requestId)
+    const current = await tx.customerServiceRequest.findUnique({ where: { id: requestId } })
+    if (current?.status !== CUSTOMER_REQUEST_STATUS.WAITING) throw httpError('该二维码已不能取消', 409)
+    await tx.customerServiceRequestToken.updateMany({ where: { requestId, status: 'ACTIVE' }, data: { status: 'INVALIDATED', invalidatedAt: now } })
+    await tx.customerServiceRequest.update({ where: { id: requestId }, data: { status: CUSTOMER_REQUEST_STATUS.CANCELLED, cancelledAt: now, updatedAt: now } })
+  })
   return request
 }
 

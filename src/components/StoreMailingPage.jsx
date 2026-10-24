@@ -19,6 +19,8 @@ import {
 } from '../utils/mailingWorkflow'
 import MailingQrSheet from './MailingQrSheet'
 import { DeveloperSafeDeleteButton } from './DeveloperSafeDelete'
+import StoreServiceAction from './StoreServiceAction'
+import StoreServiceConversion from './StoreServiceConversion'
 
 async function copyText(text) {
   if (!text) return false
@@ -373,7 +375,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2">
                         <button type="button" onClick={() => copyRecord(record)} className="btn-secondary min-h-11 whitespace-nowrap"><ClipboardCopy className="h-4 w-4" />复制本单</button>
-                        {record.status === 'pending' ? <button type="button" onClick={() => setShipRecord(record)} className="btn-primary min-h-11 whitespace-nowrap"><PackageCheck className="h-4 w-4" />标记已发货</button> : <span className="flex min-h-11 items-center justify-center text-xs text-slate-400">发货于 {formatTime(record.shippedAt)}</span>}
+                        {record.customerBound ? <StoreServiceAction record={record} type="MAILING" currentUser={currentUser} onUpdated={loadRecords} /> : record.status === 'pending' ? <button type="button" onClick={() => setShipRecord(record)} className="btn-primary min-h-11 whitespace-nowrap"><PackageCheck className="h-4 w-4" />标记已发货</button> : <span className="flex min-h-11 items-center justify-center text-xs text-slate-400">发货于 {formatTime(record.shippedAt)}</span>}
                         <DeveloperSafeDeleteButton user={currentUser} type="mailing" record={{ ...record, title: `${record.recipient} · ${view.method}`, subtitle: record.address }} onDeleted={loadRecords} className="col-span-2" />
                       </div>
                     </article>
@@ -381,6 +383,8 @@ export default function StoreMailingPage({ currentUser, onBack }) {
                 })}
         </div>
       </section>
+
+      <StoreServiceConversion currentUser={currentUser} initialType="MAILING" />
 
       {toast && <div role="status" className="fixed bottom-[max(5rem,calc(env(safe-area-inset-bottom)+4rem))] left-1/2 z-[190] -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white shadow-xl">{toast}</div>}
       <MailingQrSheet

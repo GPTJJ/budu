@@ -1,28 +1,7 @@
-import { useEffect, useRef } from 'react'
-import { BarcodeFormat, EncodeHintType, QRCodeWriter } from '@zxing/library'
 import { Loader2, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import paymentQr from '../assets/mailing-payment-qr.jpg'
 import personalWechatQr from '../assets/mailing-personal-wechat-qr.jpg'
-
-function drawQr(canvas, value) {
-  const writer = new QRCodeWriter()
-  const matrix = writer.encode(value, BarcodeFormat.QR_CODE, 320, 320, new Map([[EncodeHintType.MARGIN, 1]]))
-  canvas.width = matrix.getWidth()
-  canvas.height = matrix.getHeight()
-  const context = canvas.getContext('2d')
-  const image = context.createImageData(canvas.width, canvas.height)
-  for (let y = 0; y < canvas.height; y += 1) {
-    for (let x = 0; x < canvas.width; x += 1) {
-      const offset = (y * canvas.width + x) * 4
-      const color = matrix.get(x, y) ? 24 : 255
-      image.data[offset] = color
-      image.data[offset + 1] = color
-      image.data[offset + 2] = color
-      image.data[offset + 3] = 255
-    }
-  }
-  context.putImageData(image, 0, 0)
-}
+import CustomerServiceQr from './CustomerServiceQr'
 
 function expiryLabel(value) {
   const date = new Date(value)
@@ -43,10 +22,6 @@ export default function MailingQrSheet({
   onCancel,
   onClose,
 }) {
-  const canvasRef = useRef(null)
-  useEffect(() => {
-    if (open && kind === 'customer' && request?.publicUrl && canvasRef.current) drawQr(canvasRef.current, request.publicUrl)
-  }, [open, kind, request?.publicUrl])
   if (!open) return null
 
   const isCustomer = kind === 'customer'
@@ -78,7 +53,7 @@ export default function MailingQrSheet({
           ) : error ? (
             <p className="px-4 text-center text-sm text-rose-500">{error}</p>
           ) : isCustomer ? (
-            <canvas ref={canvasRef} data-testid="customer-request-qr" aria-label="顾客填写二维码" className="aspect-square w-full max-w-64 rounded-2xl bg-white p-2 shadow-sm" />
+            <CustomerServiceQr request={request} />
           ) : (
             <img
               src={kind === 'payment' ? paymentQr : personalWechatQr}
