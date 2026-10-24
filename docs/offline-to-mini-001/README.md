@@ -13,7 +13,7 @@
 
 OS remote 为 GPTJJ/budu；小程序为 GPTJJ/budu-miniprogram。已 fetch 核对引用。候选最终准确提交、包体摘要与持久目录由交付目录的 candidate-manifest.json 记录。
 
-生产公开健康 GET 被自动审批拒绝，原文理由：“当前授权明确将生产访问留在最终确认边界，未授权本轮连接线上服务”。未绕过。实际生产SHA、容量、迁移、Writer、现网模板和云函数配置均为本轮未核验，不从旧文档推断。
+初期生产只读访问因授权范围被自动审批拒绝，未绕过。后续用户补充明确只读授权，已核实生产完整版本与a86e150基线一致、90条迁移名称及校验和匹配、失败0、唯一Writer和同一PG实例的应用只读探针通过。当前容量事实已记录，尚无本次精确制品/备份/恢复/WAL峰值计划，不能宣称发布容量PASS。实际账号模板因平台站点安全限制仍未核验；CloudBase TEST配置及模块版本也受现有查询通道限制。完整环境证据保留在私有交付目录，不从旧文档推断上线状态。
 
 改动仅涉及独立服务申请、对应 UI/原生页、签名桥、增量迁移和只读关联统计。没有创建虚假订单、改变库存/价格/支付/退款/提成算法；没有发真实通知、创建真实订单或执行真实交易。
 
@@ -39,6 +39,8 @@ OS remote 为 GPTJJ/budu；小程序为 GPTJJ/budu-miniprogram。已 fetch 核�
 唯一业务事实：PostgreSQL `customer_service_requests` 联接原 `MailingRecord` / `Invoice`；不另造商城事实。新增 owner 四元组为服务端认证的 userId/appId/envId/openId，绑定仅在提交成功事务发生。手机/邮箱只是资料。员工仍使用既有登录及模块/门店权限；确认额外要求当前数据库里的活跃 developer，处理过程中重验，不能凭请求中的role。邮寄列表按门店过滤，旧ship接口拒绝所有已绑定服务申请。
 
 顾客：orders云函数 `serviceCapabilities / serviceResolve / serviceSubmit / serviceList / serviceDetail / serviceVisitMall` → 固定HTTPS OS `/api/v2/customer/store-services/{capabilities,resolve,submit,list,detail,visit-mall}`。TEST独立前缀 `/api/v2/test-sc11a/customer/store-services`，固定TEST环境；生产固定原AppID/env。复用内存customerSession，同时验证网关HMAC、时间/nonce、防重放、sessionHash、可信context.OPENID与OS身份映射一致。任何前端userId/openId/role/storeKey都不能覆盖服务端身份。两环境不混用。
+
+现有TEST网关将公网`/api/v2/test-sc11a/`替换为后端`/api/`。候选TEST运行时因此挂载`/api/customer/store-services`，仅按六条完整内部路径的固定映射重建公网HMAC路径；只接受POST，不读取客户端原始路径头，也不解码、改大小写、删除query或尾斜杠来修正抵达后端的路径。生产挂载与验签分支、小程序公网签名、既有Nginx均保持不变。代理可能先把公网URI别名规范化为同一动作，这些请求仍受同一固定动作签名与nonce约束，不能宣称OS能识别所有原始公网拼写。
 
 请求字段白名单：scene、requestId、type、cursor、payload（原表单字段）、subscription（本次选择，仅提示，绝非发送额度权威）。单请求体受限，云函数不提供任意host/path。列表20条游标分页且游标也校验所有者；顾客返回值不含内部操作者/通知诊断。静态消息路径为 `pages/store-service/detail?id=<申请ID>`，仍需本人认证。
 
@@ -80,7 +82,8 @@ OS remote 为 GPTJJ/budu；小程序为 GPTJJ/budu-miniprogram。已 fetch 核�
 | 验证 | 实际结果 |
 |---|---|
 | scripts/test-offline-service-review.mjs | 22/22通过：真实隔离PG/HTTP、并发、回滚、权限、通知、统计；日期修正另定向通过 |
-| scripts/test-offline-service-contract.mjs | 9/9通过：真实MP模块→本机HTTP→PG，签名/身份、扫码适配/稳定scene、功能关闭回查、通知分类及统计；日期定向通过 |
+| scripts/test-offline-service-contract.mjs | 最终15/15通过：真实MP模块→本机前缀代理→实际runtime.mount→隔离PG；新增TEST路径/签名、非规范后端路径、伪造路径头、跨环境、时间窗/重放、生产挂载及旧登录并存；原提交/回查/通知分类保留。旧代码运行新测试失败，确认覆盖原缺陷 |
+| 生产签名与旧登录定向回归 | 生产桥相关13项、旧TEST登录13项通过；连同合同测试共42项中41通过、1项既有甜意卡展示断言失败，不宣称全套PASS。该失败的测试与纯函数在本轮基线均未改动，未为过关改变业务规则或删测 |
 | scripts/test-offline-service-migration.mjs | 1/1通过：90→91增量，旧记录不变；pg_dump/restore后14表计数和完整行摘要相等 |
 | scripts/test-offline-service-staff.mjs | 9/9通过：员工真实PG/HTTP、门店隔离、角色确认及入口开关联锁 |
 | 小程序相关测试 | 最终199/199通过，包括本任务、购物/结算客户端、订单、环境、门店、个人入口等；不代表实际付款 |
@@ -92,13 +95,15 @@ OS remote 为 GPTJJ/budu；小程序为 GPTJJ/budu-miniprogram。已 fetch 核�
 
 独立审查者未主写业务代码，复核后无剩余已发现的阻断代码问题；已修复顾客内部字段暴露、二维码重复生成、历史done列表、模板缺失文案、首次未知口径、日期规范化。另由OS UI作者交叉审查后端并编写员工权限测试。真实平台/生产验收不属于该PASS范围。
 
+后续只读核验发现真实TEST的前缀转换此前未被本机合同测试覆盖，本地候选已修正并经独立复核。测试现使用实际runtime.mount；为阻止合成提交触发旧企业微信通道，仅通过factory已有参数对象透传router的deliverInternal选项，默认true保持现有生产行为，测试显式false；这不是HTTP或环境开关。实际TEST后端仍缺本任务模块、签名配置和运行开关，本地修复不代表远端已联通。
+
 复现：先使用本机专用隔离PostgreSQL（测试helper拒绝非loopback及生产DB名），再设置TEST_DATABASE_URL、OFFLINE_SERVICE_MP_REPO运行 `npm run test:offline-service`；执行环境若限制本机数据库端口需正常获得平台批准。UI：`npm run dev -- --host 127.0.0.1` 后打开 `/tests/offline-service-harness.html`，开票加 `?page=invoice`；该入口明确为合成UI，不是真实业务服务。小程序脚本/候选详情见对应仓库 `docs/checkpoints/2026-10-24-offline-to-mini-001.md`。
 
 ## 正式执行顺序与恢复
 
 以下为待最终确认方案，不是已执行记录。
 
-1. 先获本轮生产只读核查许可；核对实际SHA、当前两端线上代码、schema/migration ledger、一个权威Writer、容量/阈值、可用回退资产。若现网有新提交，只做明确兼容对齐，不能以本地基线覆盖。
+1. 本轮生产版本、迁移账本、唯一Writer、应用DB及当前容量已只读核实；真正发布前仍须确认基线未变并完成精确容量准入及恢复准备。若现网有新提交，只做明确兼容对齐，不能以本地基线覆盖。
 2. 补齐既有隔离环境中的OS服务桥配置和TEST orders增量文件；不要改生产config.js或整包覆盖。核验账号可用模板、语义、实际字段和权限，完成指定自有账号扫码、拒订与同意订阅、两类回执与消息深链、跨账号拒绝、iPhone/iPad实机。当前未具备全链路验收证据。
 3. 生产迁移前按现有正式部署工具做备份并验可恢复性；显式确认唯一新增迁移20261024120000_offline_store_services。先部署兼容后端、保持新入口/提交/发送关闭；执行应用实际只读DB探针及旧H5检查。禁止在启动时偷偷执行seed或新增业务写入。
 4. 按现有签名桥发布流程仅增量部署orders的两个新模块和入口；保留已核验的生产config与所有非本任务云函数内容。不改payOrder/支付回调。
@@ -108,7 +113,7 @@ OS remote 为 GPTJJ/budu；小程序为 GPTJJ/budu-miniprogram。已 fetch 核�
 
 回滚优先关闭QR、SUBMISSIONS、SEND，保留RUNTIME及兼容后端的本人查询、幂等恢复、旧ship保护。保留第91迁移和全部新事实/审计/UNKNOWN任务，不执行down/drop、不恢复旧快照覆盖上线期间申请。**有新绑定申请后不得直接切回缺少归属/旧ship保护的旧后端**；若二进制必须替换，应使用保留上述兼容能力的恢复候选，并重新审查具体影响。SENDING/UNKNOWN不得因回滚自动重发；平台人工核对后如需额外触达应有具体授权。
 
-本轮剩余集中确认：允许只读核验现网与账号模板；在真实隔离联调/用户验收证据完整后，再确认准确SHA、增量迁移、既有标准发布步骤、云函数增量更新、小程序提审发布和入口开关。当前不会请求用一个笼统“上线”跳过外部验证。
+只读授权已取得，本地TEST路径修复已获授权。本阶段保留现有环境，模板信息由用户稍后提供；不执行生产迁移、部署、提审或发布。在真实隔离联调/用户验收证据完整后，再集中确认准确SHA、增量迁移、既有标准发布步骤、云函数增量更新、小程序提审发布和入口开关。
 
 ## 简明操作
 

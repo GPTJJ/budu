@@ -18,34 +18,108 @@ const mpRoot = process.env.OFFLINE_SERVICE_MP_REPO
 if (!mpRoot) throw Error('OFFLINE_SERVICE_MP_REPO_REQUIRED')
 const { createServiceRequestHandler } = require(mpRoot + '/cloudfunctions/orders/service-request-handler.js')
 const { createServiceRequestTransport } = require(mpRoot + '/cloudfunctions/orders/service-request-transport.js')
+const testPublicPrefix = '/api/v2/test-sc11a'
+const servicePath = '/customer/store-services'
+const productionEnvId = 'budu-d6gz358ixe39faf43'
+const listenLocal = server => new Promise((resolve, reject) => {
+  server.once('error', reject)
+  server.listen(0, '127.0.0.1', () => { server.removeListener('error', reject); resolve(server) })
+})
+const closeLocal = async server => {
+  if (!server?.listening) return
+  server.closeAllConnections()
+  await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+}
+const requestLocal = (port, { path, method = 'POST', body = {}, headers = {} }) => new Promise((resolve, reject) => {
+  const payload = Buffer.from(JSON.stringify(body))
+  const request = http.request({ hostname: '127.0.0.1', port, path, method,
+    headers: { 'content-type': 'application/json', 'content-length': String(payload.length), ...headers } }, response => {
+    const chunks = []
+    response.on('data', chunk => chunks.push(chunk))
+    response.on('error', reject)
+    response.on('end', () => {
+      let decoded = null
+      try { decoded = JSON.parse(Buffer.concat(chunks).toString()) } catch { /* unmatched routes may return HTML */ }
+      resolve({ status: response.statusCode, body: decoded })
+    })
+  })
+  request.on('error', reject)
+  request.setTimeout(5000, () => request.destroy(Error('LOCAL_CONTRACT_HTTP_TIMEOUT')))
+  request.end(payload)
+})
+
+// Reproduce only the observed location/proxy_pass prefix replacement. This is
+// not a model of Nginx URI normalization: ambiguous paths below are the exact
+// non-canonical bytes that reach Express, never client-supplied URL headers.
+function createTestPrefixProxy(upstreamPort, forwarded) {
+  return http.createServer((request, response) => {
+    if (!request.url.startsWith(testPublicPrefix + '/')) { response.writeHead(404); response.end(); return }
+    const path = '/api/' + request.url.slice(testPublicPrefix.length + 1)
+    const headers = { ...request.headers, 'x-budu-test-gateway': '1' }
+    forwarded.push({ path, method: request.method, testGateway: headers['x-budu-test-gateway'] })
+    const upstream = http.request({ hostname: '127.0.0.1', port: upstreamPort, path, method: request.method, headers }, result => {
+      response.writeHead(result.statusCode, result.headers)
+      result.pipe(response)
+    })
+    upstream.on('error', () => { if (!response.headersSent) response.writeHead(502); response.end() })
+    upstream.setTimeout(5000, () => upstream.destroy(Error('LOCAL_CONTRACT_PROXY_TIMEOUT')))
+    request.on('aborted', () => upstream.destroy())
+    request.pipe(upstream)
+  })
+}
 
 test('real PostgreSQL + real HTTP + companion MiniProgram gateway contract', async t => {
   const url = await createDisposablePgDatabase('offline_http')
   process.env.DATABASE_URL = url
   const { PrismaClient } = await import('@prisma/client')
   const db = new PrismaClient({ datasourceUrl: url }); globalThis.__buduPrisma = db
-  const { createStoreServiceCustomerRouter, createStoreServiceStaffRouter, generateStoreServiceCode } = await import('../server/store-service-api.js')
+  const { createStoreServiceRuntime, generateStoreServiceCode } = await import('../server/store-service-api.js')
+  const { createWechatTestLoginRouter } = await import('../server/wechat-test-login.js')
   const { createCustomerSession } = await import('../server/customer-auth.js')
   const { createCustomerServiceRequest } = await import('../server/customer-requests.js')
   const { confirmService } = await import('../server/store-service-core.js')
   const config = { enabled: true, mode: 'test', appId, cloudBaseEnvId: envId, gatewaySecret: secret, markerKey, appSecret: 'synthetic-app-secret' }
-  const env = { STORE_SERVICE_SUBMISSIONS_ENABLED: '1', STORE_SERVICE_RUNTIME_ENABLED: '1', STORE_SERVICE_QR_ENABLED: '1' }
+  const env = { STORE_SERVICE_SUBMISSIONS_ENABLED: '1', STORE_SERVICE_RUNTIME_ENABLED: '1', STORE_SERVICE_QR_ENABLED: '1', STORE_SERVICE_SEND_ENABLED: '0' }
   await db.user.createMany({ data: [{ ...DEV, passwordHash: 'synthetic' }, ...['a', 'b'].map(id => ({ id: `http-${id}`, username: `http-${id}`, role: 'customer', passwordHash: 'synthetic' }))] })
   await db.store.create({ data: { key: 'http-store', name: '合成门店' } })
   await db.weChatAuthIdentity.createMany({ data: ['a', 'b'].map(id => ({ id: uuid(), userId: `http-${id}`, openId: `synthetic-${id}`, provider: 'WECHAT_MINIPROGRAM', appId })) })
   const sessions = {}
   for (const id of ['a', 'b']) sessions[id] = (await createCustomerSession({ userId: `http-${id}`, markerKey, db })).rawToken
-  const app = express(), prefix = '/api/v2/test-sc11a/customer/store-services'
-  app.use(prefix, express.json(), createStoreServiceCustomerRouter({ db, config, env, deliverInternal: false }))
-  const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)) })
-  const port = server.address().port
-  const request = (options, callback) => http.request({ ...options, protocol: 'http:', hostname: '127.0.0.1', port }, callback)
-  const handler = id => {
-    const context = { OPENID: `synthetic-${id}`, APPID: appId, ENV: envId }
-    return createServiceRequestHandler({ context, send: createServiceRequestTransport({ context, env: { TCB_ENV: envId, STORE_SERVICE_TEST_GATEWAY_SECRET: secret } }, { request }) })
+  const app = express(), prefix = testPublicPrefix + servicePath, forwarded = []
+  const noProvider = async () => { throw Error('EXTERNAL_PROVIDER_FORBIDDEN_IN_CONTRACT_TEST') }
+  const runtime = createStoreServiceRuntime({ db, config, env, deliverInternal: false, fetchImpl: noProvider })
+  runtime.mount(app)
+  app.use('/api/customer/auth/wechat', express.json(), createWechatTestLoginRouter({ db, configLoader: () => config, exchange: noProvider }))
+  const server = await listenLocal(http.createServer(app))
+  const proxy = await listenLocal(createTestPrefixProxy(server.address().port, forwarded))
+  const port = proxy.address().port
+  const handler = (id, targetPort = port, environment = envId) => {
+    const context = { OPENID: `synthetic-${id}`, APPID: appId, ENV: environment }
+    const request = (options, callback) => {
+      assert.equal(options.hostname, 'buducandy.cn'); assert.equal(options.protocol, 'https:')
+      return http.request({ ...options, protocol: 'http:', hostname: '127.0.0.1', port: targetPort }, callback)
+    }
+    const secretName = environment === envId ? 'STORE_SERVICE_TEST_GATEWAY_SECRET' : 'SWEET_CARD_PRODUCTION_GATEWAY_SECRET'
+    return createServiceRequestHandler({ context, send: createServiceRequestTransport({ context, env: { TCB_ENV: environment, [secretName]: secret } }, { request }) })
   }
   const a = handler('a'), b = handler('b')
   const call = (client, id, action, args = {}) => client({ action, customerSession: sessions[id], ...args })
+  const authBody = { sessionHash: crypto.createHash('sha256').update(sessions.a).digest('hex'), openId: 'synthetic-a' }
+  const signed = ({ path = prefix + '/list', signedPath = path, method = 'POST', body = authBody,
+    environment = envId, signedAppId = appId, timestamp = String(Date.now()), nonce = crypto.randomBytes(24).toString('base64url'), headers = {} } = {}) => {
+    const fields = ['v1', timestamp, nonce, method, signedPath, crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex'), environment, signedAppId]
+    return { path, method, body, headers: { authorization: 'Bearer ' + sessions.a, 'x-budu-gateway-timestamp': timestamp,
+      'x-budu-gateway-nonce': nonce, 'x-budu-gateway-environment': environment, 'x-budu-gateway-appid': signedAppId,
+      'x-budu-gateway-signature': crypto.createHmac('sha256', secret).update(fields.join('\n')).digest('base64url'), ...headers } }
+  }
+  const businessSnapshot = () => Promise.all(['customerServiceRequest', 'customerServiceRequestToken', 'invoice', 'mailingRecord',
+    'notification', 'notificationDelivery', 'storeServiceAudit', 'storeServiceDelivery', 'storeServiceVisit', 'onlineSettlement']
+    .map(model => db[model].findMany({ orderBy: { id: 'asc' } })))
+  const assertDenied = async (input, targetPort = port) => {
+    const result = await requestLocal(targetPort, input)
+    assert.ok([400, 401, 403, 404].includes(result.status), `must reject ${input.method || 'POST'} ${input.path}; received ${result.status}`)
+    assert.notEqual(result.body?.ok, true)
+  }
   const png = Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), Buffer.alloc(140)])
   let generatedScene = '', providerCalls = 0
   const qrFetch = async (endpoint, input) => {
@@ -56,6 +130,49 @@ test('real PostgreSQL + real HTTP + companion MiniProgram gateway contract', asy
     return { ok: true, arrayBuffer: async () => png }
   }
   try {
+    await t.test('actual TEST runtime mount accepts public signatures after the established prefix rewrite', async () => {
+      const capabilities = await call(a, 'a', 'serviceCapabilities')
+      assert.equal(capabilities.ok, true); assert.equal(capabilities.result.enabled, true)
+      const list = await call(a, 'a', 'serviceList')
+      assert.equal(list.ok, true); assert.deepEqual(list.result.rows, [])
+      assert.deepEqual(forwarded.slice(-2), [
+        { path: '/api' + servicePath + '/capabilities', method: 'POST', testGateway: '1' },
+        { path: '/api' + servicePath + '/list', method: 'POST', testGateway: '1' },
+      ])
+    })
+    await t.test('existing TEST login session verification coexists at its unchanged internal mount', async () => {
+      const previousAppEnv = process.env.APP_ENV
+      process.env.APP_ENV = 'test'
+      try {
+        const before = await businessSnapshot()
+        const result = await requestLocal(port, { path: testPublicPrefix + '/customer/auth/wechat/session/verify',
+          headers: { authorization: 'Bearer ' + sessions.a } })
+        assert.equal(result.status, 200); assert.equal(result.body.ok, true); assert.ok(result.body.customerRef)
+        assert.equal(forwarded.at(-1).path, '/api/customer/auth/wechat/session/verify')
+        await assertDenied({ path: '/api/customer/auth/wechat/session/verify', headers: { authorization: 'Bearer ' + sessions.a } }, server.address().port)
+        assert.deepEqual(await businessSnapshot(), before)
+      } finally {
+        if (previousAppEnv === undefined) delete process.env.APP_ENV
+        else process.env.APP_ENV = previousAppEnv
+      }
+    })
+    await t.test('actual production runtime mount retains the public production path and signed transport', async () => {
+      const productionApp = express()
+      const productionRuntime = createStoreServiceRuntime({ db, config: { ...config, mode: 'production', cloudBaseEnvId: productionEnvId },
+        env, deliverInternal: false, fetchImpl: noProvider })
+      productionRuntime.mount(productionApp)
+      const productionServer = await listenLocal(http.createServer(productionApp))
+      try {
+        const productionPort = productionServer.address().port, productionClient = handler('a', productionPort, productionEnvId)
+        const before = await businessSnapshot()
+        assert.equal((await call(productionClient, 'a', 'serviceCapabilities')).result.enabled, true)
+        assert.deepEqual((await call(productionClient, 'a', 'serviceList')).result.rows, [])
+        await assertDenied(signed({ path: '/api' + servicePath + '/list', signedPath: '/api/v2' + servicePath + '/list', environment: productionEnvId }), productionPort)
+        await assertDenied(signed({ path: prefix + '/list', environment: productionEnvId }), productionPort)
+        await assertDenied(signed({ path: '/api/v2' + servicePath + '/list', environment: envId }), productionPort)
+        assert.deepEqual(await businessSnapshot(), before)
+      } finally { productionRuntime.stop(); await closeLocal(productionServer) }
+    })
     const f = await createCustomerServiceRequest({ prismaClient: db, user: DEV, origin: 'https://synthetic.invalid', input: { type: 'INVOICE', storeKey: 'http-store', amountCents: 1200, category: '食品' } })
     await t.test('QR off fails closed without contacting provider; TEST QR is developer-only', async () => {
       await assert.rejects(generateStoreServiceCode({ db, requestId: f.request.id, user: DEV, config, env: {}, fetchImpl: qrFetch }), { status: 503 })
@@ -72,8 +189,54 @@ test('real PostgreSQL + real HTTP + companion MiniProgram gateway contract', asy
       assert.equal(stored.miniSceneHash, crypto.createHash('sha256').update(scene).digest('hex'))
       assert.ok(!JSON.stringify(stored).includes(scene))
     })
+    await t.test('internal signatures and forged URL headers cannot authorize requests or mutate business facts', async () => {
+      const before = await businessSnapshot()
+      const forwardedHeaders = { 'original-url': prefix + '/list', 'x-original-url': prefix + '/list',
+        'x-original-uri': prefix + '/list', 'x-forwarded-uri': prefix + '/list', 'x-rewrite-url': prefix + '/list',
+        'x-forwarded-prefix': testPublicPrefix, 'x-budu-test-gateway': '1' }
+      await assertDenied(signed({ signedPath: '/api' + servicePath + '/list' }))
+      await assertDenied(signed({ signedPath: prefix + '/capabilities' }))
+      await assertDenied(signed({ signedPath: '/api' + servicePath + '/list', headers: forwardedHeaders }))
+      await assertDenied(signed({ headers: { ...forwardedHeaders, 'x-budu-gateway-signature': 'A'.repeat(43) } }))
+      await assertDenied(signed({ path: prefix + '/unknown', signedPath: prefix + '/list', headers: forwardedHeaders }))
+      await assertDenied(signed({ path: prefix + '/submit', body: { ...authBody, scene,
+        payload: { confirmedAccurate: true, titleType: 'PERSONAL', invoiceTitle: '不得写入', email: 'denied@example.invalid' } },
+        headers: { ...forwardedHeaders, 'x-budu-gateway-signature': 'A'.repeat(43) } }))
+      await assertDenied(signed({ path: '/api' + servicePath + '/list' }), server.address().port)
+      await assertDenied(signed(), server.address().port)
+      assert.deepEqual(await businessSnapshot(), before)
+    })
+    await t.test('TEST gateway rejects missing signatures, foreign scope, stale timestamps and nonce replay', async () => {
+      const before = await businessSnapshot()
+      await assertDenied({ path: prefix + '/list', body: authBody, headers: { authorization: 'Bearer ' + sessions.a } })
+      await assertDenied(signed({ signedAppId: 'wx0000000000000000' }))
+      await assertDenied(signed({ environment: productionEnvId }))
+      await assertDenied(signed({ timestamp: String(Date.now() - 600000) }))
+      await assertDenied(signed({ timestamp: String(Date.now() + 600000) }))
+      const replay = signed()
+      await assertDenied({ ...replay, headers: { ...replay.headers, 'x-budu-gateway-signature': 'A'.repeat(43) } })
+      const first = await requestLocal(port, replay)
+      assert.equal(first.status, 200); assert.equal(first.body.ok, true)
+      await assertDenied(replay)
+      assert.deepEqual(await businessSnapshot(), before)
+    })
+    await t.test('non-canonical paths arriving at the backend and non-POST methods fail closed', async () => {
+      const before = await businessSnapshot()
+      const paths = ['/list?extra=1', '/list?', '/list/', '//list', '/LIST', '/%6cist', '/list%2f', '/%2e/list', '/list%3fextra=1']
+      for (const suffix of paths) {
+        // Both a signature over the non-canonical public spelling and one over
+        // the intended canonical action must fail for these backend paths.
+        const path = prefix + suffix
+        await assertDenied(signed({ path }))
+        await assertDenied(signed({ path, signedPath: prefix + '/list', headers: {
+          'original-url': prefix + '/list', 'x-original-url': prefix + '/list', 'x-forwarded-prefix': testPublicPrefix } }))
+      }
+      await assertDenied(signed({ method: 'GET' }))
+      await assertDenied(signed({ method: 'PUT' }))
+      assert.deepEqual(await businessSnapshot(), before)
+    })
     await t.test('unsigned, cross-user, expired session and forged identity fail closed', async () => {
-      const unsigned = await fetch(`http://127.0.0.1:${port}${prefix}/list`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+      const unsigned = await requestLocal(port, { path: prefix + '/list' })
       assert.equal(unsigned.status, 401)
       const mismatch = await b({ action: 'serviceList', customerSession: sessions.a })
       assert.equal(mismatch.ok, false); assert.equal(mismatch.code, 'CUSTOMER_SESSION_DENIED')
@@ -109,7 +272,7 @@ test('real PostgreSQL + real HTTP + companion MiniProgram gateway contract', asy
       assert.equal(detail.result.notification.status, 'BLOCKED_CONFIG')
     })
   } finally {
-    server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.$disconnect(); await dropDisposablePgDatabase(url)
+    runtime.stop(); await closeLocal(proxy); await closeLocal(server); await db.$disconnect(); await dropDisposablePgDatabase(url)
   }
 })
 

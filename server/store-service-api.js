@@ -11,6 +11,11 @@ import { serviceTemplates, createServiceWechatSender, deliverStoreServiceOnce } 
 import { queryServiceConversion } from './store-service-conversion.js'
 
 const TEST_ENV = 'budu-test-d8gwb4xwy41dc6c61'
+// The existing TEST proxy replaces /api/v2/test-sc11a/ with /api/.
+// Recover only these canonical signing paths; never trust forwarded URL headers
+// or normalize a non-canonical path that reaches this application.
+const TEST_GATEWAY_PATHS = new Map(['capabilities', 'resolve', 'submit', 'list', 'detail', 'visit-mall']
+  .map(action => [`/api/customer/store-services/${action}`, `/api/v2/test-sc11a/customer/store-services/${action}`]))
 const hash = s => crypto.createHash('sha256').update(s).digest('hex')
 const equal = (a, b) => Buffer.byteLength(a) === Buffer.byteLength(b) && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
 export function loadStoreServiceConfig(env = process.env) {
@@ -23,13 +28,14 @@ export function loadStoreServiceConfig(env = process.env) {
 }
 function verifyServiceGateway(req, config, replayGuard) {
   if (config?.mode === 'production') return verifyProductionGatewayRequest(req, config, { replayGuard })
+  const requestPath = TEST_GATEWAY_PATHS.get(req.originalUrl)
   if (!config?.enabled || config.mode !== 'test' || config.cloudBaseEnvId !== TEST_ENV || config.appId !== 'wxfce0a3c4bb430023'
-    || !req.originalUrl.startsWith('/api/v2/test-sc11a/customer/store-services/')) throw httpError('身份核验失败', 403)
+    || req.method !== 'POST' || !requestPath) throw httpError('身份核验失败', 403)
   const timestamp = req.get('x-budu-gateway-timestamp') || '', nonce = req.get('x-budu-gateway-nonce') || ''
   const signature = req.get('x-budu-gateway-signature') || ''
   if (!/^\d{13}$/.test(timestamp) || Math.abs(Date.now() - Number(timestamp)) > 300000 || !/^[A-Za-z0-9_-]{22,128}$/.test(nonce)
     || req.get('x-budu-gateway-environment') !== config.cloudBaseEnvId || req.get('x-budu-gateway-appid') !== config.appId) throw httpError('身份核验失败', 401)
-  const expected = signProductionGatewayRequest({ timestamp, nonce, method: req.method, requestPath: req.originalUrl,
+  const expected = signProductionGatewayRequest({ timestamp, nonce, method: req.method, requestPath,
     bodyHash: gatewayBodyHash(req.body), environment: config.cloudBaseEnvId, appId: config.appId }, config.gatewaySecret)
   if (!equal(signature, expected) || !replayGuard.consume(nonce, Number(timestamp))) throw httpError('身份核验失败', 401)
 }
@@ -147,8 +153,8 @@ export function createStoreServiceStaffRouter({ db, env = process.env, configLoa
   }
   return router
 }
-export function createStoreServiceRuntime({ db, config, env = process.env, fetchImpl }) {
-  const router = createStoreServiceCustomerRouter({ db, config, env })
+export function createStoreServiceRuntime({ db, config, env = process.env, fetchImpl, deliverInternal = true }) {
+  const router = createStoreServiceCustomerRouter({ db, config, env, deliverInternal })
   const send = createServiceWechatSender({ config, templates: serviceTemplates(env), fetchImpl,
     envVersion: config.mode === 'production' ? 'release' : 'developer' })
   let timer = null, busy = false
@@ -159,7 +165,7 @@ export function createStoreServiceRuntime({ db, config, env = process.env, fetch
   }
   return {
     mount(app) {
-      const prefix = config.mode === 'production' ? '/api/v2' : '/api/v2/test-sc11a'
+      const prefix = config.mode === 'production' ? '/api/v2' : '/api'
       app.use(`${prefix}/customer/store-services`, express.json({ limit: '32kb' }), router,
         (error, req, res, next) => res.status(error?.type === 'entity.too.large' ? 413 : 400).json({ ok: false, error: 'SERVICE_INVALID_INPUT' }))
     },
