@@ -59,7 +59,9 @@
     {
       "item": "TEST staff browser access",
       "status": "BLOCKED",
-      "reason": "USER_DECLINED_ORIGIN_APPROVAL"
+      "reason": "SAVED_ORIGIN_PERMISSION_OR_MANAGED_POLICY_AFTER_FRESH_HUMAN_AUTHORIZATION",
+      "freshHumanAuthorization": true,
+      "initialReason": "USER_DECLINED_ORIGIN_APPROVAL"
     },
     {
       "item": "this round iPhone/iPad physical keyboard and core form acceptance",
