@@ -97,12 +97,42 @@
     "os-production-build.log": "fc7c7ac46ba0855ecb0677de7fb111f60679cf3faaca222356fbcf3c40296572",
     "ipad-timeout-layer-analysis.json": "47cb7a7f593eea3de3da27d167f9ba3ad6a824307564d0bee6b5c86379e013d9",
     "test-template-config.json": "b377fd5d6317ec56f6be140c4c1ec45bb7421e8fc502b89cfcfb8961f52acc87",
-    "source-review.md": "2330cd6654fc4627d16f21a15c8dcb85b13d0d522958a1cf3ebdeb54412cd1b9"
+    "source-review.md": "2330cd6654fc4627d16f21a15c8dcb85b13d0d522958a1cf3ebdeb54412cd1b9",
+    "test-cloud-log-read.json": "aa0b8b7627da9d64eac92627a8bc91f624af33294bfbae05ccb59f733f07cb1d"
   },
   "privacy": "No secrets, account identities, raw private configuration, preview credentials or customer data included",
   "productionMutation": false,
   "thisRoundMessageSends": 0,
   "temporaryPgClustersStopped": true,
   "thisRoundRemoteTestBusinessWrites": false,
-  "localDisposableSyntheticWrites": true
+  "localDisposableSyntheticWrites": true,
+  "subscriptionState": {
+    "default": "formal",
+    "allowed": [
+      "formal",
+      "trial",
+      "developer"
+    ],
+    "productionRuntime": "formal",
+    "testRuntime": "developer",
+    "verificationScope": "LOCAL_FINAL_PROVIDER_BODY_ASSERTIONS"
+  },
+  "qrVersions": {
+    "production": "release",
+    "test": "develop",
+    "productionPathGatePreserved": true
+  },
+  "templateInputPolicy": {
+    "source": "USER_WILL_PROVIDE_MY_TEMPLATES_LIST_AND_FULL_DETAIL_SCREENSHOTS",
+    "extractionOwner": "Codex",
+    "technicalRulesVerificationOwner": "Codex_USING_OFFICIAL_DOCS",
+    "actualTemplatesVerified": false
+  },
+  "cloudLogs": {
+    "testFunctionIdentityVerified": true,
+    "currentLogTopicConfigured": false,
+    "failureWindowLogsObtained": false,
+    "logServiceCreated": false,
+    "zeroRequestsInferred": false
+  }
 }
