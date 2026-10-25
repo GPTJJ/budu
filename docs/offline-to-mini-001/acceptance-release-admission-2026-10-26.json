@@ -1,0 +1,123 @@
+{
+  "task": "BUDU-OFFLINE-TO-MINI-001",
+  "phase": "RELEASE_CAPACITY_MIGRATION_ADMISSION_20261026",
+  "date": "2026-10-26",
+  "status": "INTEGRATION_BLOCKED",
+  "stateReason": "All required product TEST, release engineering isolation and read-only admission passed; awaiting explicit production authorization. Final task HEAD is the commit containing this checkpoint.",
+  "requiredProductTestAcceptance": "PASS_REUSED_WITHOUT_RESCAN_RESEND_OR_DEVICE_RETEST",
+  "frozenReleaseSources": {
+    "os": "e91561238b866284bb6621a57fc02926fba01ec8",
+    "miniprogram": "e73a5d1e7261499c8f670556297a54c92367c873"
+  },
+  "engineeringBundleSha256": "b94f0542ebf7b23408e19d1540e612a922b69a9fe7696ca62a74fd37f50c96c7",
+  "contractSha256": "df03b47067df795324c832f52f44d85c6669dd3771a06bba418326db2bfdd4b0",
+  "profileSha256": "186033d0c670bdab68f3124daf8b67d17a6420526c9e8014dee6753655ea4d6e",
+  "ociManifest": "sha256:6704d3a8f8657c4aac6cf711651f8c430403179b72537fd425b108b56023cb05",
+  "ociConfig": "sha256:903b7e283d4f549f0588bddcf7e01f725512d2096bafc002e880d1a457202e9f",
+  "archiveSha256": "c67eb8858caedcbb4082d58355459c18bc235bbe3899ca0c31a9fa290d4323cb",
+  "archiveBytes": 586725888,
+  "migration": {
+    "beforeCount": 90,
+    "afterCount": 91,
+    "newName": "20261024120000_offline_store_services",
+    "newSqlSha256": "c9cfebd75e2f469f2389133374b3188da0865a67e4de9dc28ad7c8c970ec26b1",
+    "existing90ChecksumsUnchanged": true,
+    "ddlAndLedgerSameTransaction": true,
+    "newSchemaShapeSha256": "352280e6aa74049e45a13e6b9ccceec5baf2e5d29d647de23749bb05725d9bc3"
+  },
+  "capacity": {
+    "status": "PASS_ORIGINAL_GUARDS_READONLY_PREFLIGHT",
+    "observedAtUtc": "2026-10-25T22:09:15.636413+00:00",
+    "usedBytes": 67074400256,
+    "availableBytes": 13789687808,
+    "allowedAdditionalPeakBytes": 3052269568,
+    "additionalPeakBytes": 2747613570,
+    "marginBytes": 304655998,
+    "phasePeaks": {
+      "import": 2275674267,
+      "databaseAfterVerifiedNewArchiveRelease": 2747613570,
+      "databaseIfArchiveRetained": 3334339458
+    },
+    "retainedArchiveStatus": "FAIL",
+    "retainedArchiveDeficitBytes": 282069890,
+    "projectedAvailableBytes": 11042074238,
+    "projectedUsagePercentCeil": 87,
+    "verifiedSharedCreditBytes": 2197857167,
+    "transientSharedIngestBytes": 343955852,
+    "existingAssetDeletionCredit": 0,
+    "guardrails": {
+      "minAvailableBytes": 10737418240,
+      "maxUsagePercent": 90,
+      "absoluteMaxAdditionalPeakBytes": 6442450944,
+      "ordinaryReserveBytes": 536870912,
+      "maxArchiveBytes": 805306368
+    },
+    "resourceLimits": {
+      "backupLimit": 440252462,
+      "restoreLimit": 828150853,
+      "walLimit": 253680663,
+      "migratorLimit": 134217728
+    },
+    "backupAndWalBudgetsAreNotMeasuredProductionOperations": true,
+    "maxWalSizeTreatedAsHardQuota": false,
+    "currentDfAndFullHistoricalPeakAlwaysRechecked": true
+  },
+  "isolation": {
+    "dockerServerVersion": "29.1.3",
+    "containerdVersion": "2.2.1",
+    "actualContainerdBinaryMatchesProduction": true,
+    "postgresVersion": "16.14",
+    "unitTests": 38,
+    "realAtomicMigrationCases": 6,
+    "realSnapshotAndFaultCases": 5,
+    "realActiveCompatibilityCases": 4,
+    "realCloneParityCases": 1,
+    "routeFaultEvidence": "REAL_CONTROLLER_WITH_DETERMINISTIC_BACKEND_NOT_REAL_NGINX",
+    "productionCredentialsUsed": false,
+    "newMessagesOrMails": 0
+  },
+  "evidence": {
+    "local-exact-docker-import-rehearsal.json": {
+      "sha256": "06323aeb646a37a0609102767f83fac7bc31339f4f077a91d6d8b8d18dc72f66",
+      "status": "PASS_REAL_ISOLATED_IMPORT_REUSE_AND_EXACT_NEW_ARCHIVE_RELEASE"
+    },
+    "local-atomic-pg16-migration-rehearsal.json": {
+      "sha256": "7757a9cd7050889e508e8816b77a5d7206d5741bf8966c8c28589acc7e1fe1d9",
+      "status": "PASS_REAL_PG16_ATOMIC_SIGNAL_AND_SCHEMA_REHEARSAL"
+    },
+    "local-snapshot-backup-restore-fault-rehearsal-resumed4.json": {
+      "sha256": "b8b0453a9903603884ec0a0248a5a1c7c5a39cba1ae7593750a439506b6d1bf1",
+      "status": "PASS_REAL_LINUX_PG16_SNAPSHOT_RESTORE_AND_BOUNDED_FAILURES"
+    },
+    "local-compatible-active-http-final.json": {
+      "sha256": "a438f6abc9c8e4577aca5526ba9608af48fd2e9807e93968678e2678226b6bb1",
+      "status": "PASS_REAL_FROZEN_ACTIVE_COMPATIBLE_RECALL"
+    },
+    "local-real-profile-clone-parity-exact.json": {
+      "sha256": "121cc932384028c74f6e3e3ab974b09055132e918f328464dbf11ccda4752bc2",
+      "status": "PASS_REAL_FROZEN_CLONE_PARITY_RUNTIME_AND_PG_PROBE"
+    }
+  },
+  "independentFinalReview": "PASS_ENGINEERING_ISOLATION_AND_READONLY_ADMISSION_PENDING_FINAL_GIT_BINDING",
+  "productionActionsExecuted": [],
+  "productionReadonlyAccessPerformed": true,
+  "globalTestSendEnabled": false,
+  "newBusinessSourceChanges": false,
+  "applicationImageRebuilt": false,
+  "existingProductionAssetDeletionRequested": false,
+  "productionExpansionRequested": false,
+  "executionAuthorizationRequired": true,
+  "independentFinalReviewSha256": "f21d9a02246f8378fb30674cc6318ed1b198ee32e58843247f77c14d58525d3a",
+  "finalPlanSha256": "8180fd796d824f6cb7e4975ca518ea658541d0010410c41eab800f96d2538391",
+  "startingTaskHeads": {
+    "os": "f03ba59774f26bc65616107e040c5931ea7e0f70",
+    "miniprogram": "48402a9c25c2112ac0712b45e0cd70e647367b1d"
+  },
+  "privateIdentityConfigurationOrCredentialsIncluded": false,
+  "finalPlanActualReadonlyPreflight": {
+    "path": "readonly-release-profile-final-plan-preflight.json",
+    "sha256": "7a9e7556f0265e92063dd3030dbbfc761dfabb7c325d2259408c3f1e78cb5fb1",
+    "finalPlanSha256": "8180fd796d824f6cb7e4975ca518ea658541d0010410c41eab800f96d2538391",
+    "status": "READONLY_PREFLIGHT_PASS"
+  }
+}
