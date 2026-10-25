@@ -1,0 +1,122 @@
+{
+  "task": "BUDU-OFFLINE-TO-MINI-001",
+  "date": "2026-10-26",
+  "updatedAtUtc": "2026-10-25T19:25:51.480517+00:00",
+  "status": "INTEGRATION_BLOCKED",
+  "requiredCurrentTestProductAcceptance": "PASS",
+  "frozenReleaseSources": {
+    "os": "e91561238b866284bb6621a57fc02926fba01ec8",
+    "miniprogram": "e73a5d1e7261499c8f670556297a54c92367c873"
+  },
+  "implementationSources": {
+    "os": "4bdea23503844c4ad743005e90ae83b91b70f6b9",
+    "miniprogram": "fd26c8fc853b68d05d28478b2ef1142259035f46"
+  },
+  "scenarios": {
+    "INVOICE": "PASS_PREVIOUS_REAL_CHAIN_REUSED_NO_RESEND",
+    "MAILING_EXPRESS": "PASS_PREVIOUS_REAL_CHAIN_REUSED_NO_RESEND",
+    "MAILING_FLASH": "PASS_CURRENT_REAL_CARRIER_PROOF_PLATFORM_AND_DEVICE_CHAIN_ONCE"
+  },
+  "currentPhysicalAcceptance": {
+    "devices": "Same previously identified iPhone and iPad, human operated; no new SDK identity read",
+    "mailAddressChars": 190,
+    "mailRemarkChars": 140,
+    "invoiceNoteChars": 140,
+    "allExactServerMatches": true,
+    "nativeKeyboardAndScrollBothFormsBothDevices": "PASS_DIRECT_HUMAN",
+    "crossDeviceRepeat": "PASS_SAME_RECEIPT_AND_SINGLE_LINKED_RECORD",
+    "nativeRejection": "PASS_ACTUAL_SERVER_REJECT_AND_SAVE_RECALL",
+    "messageEntryBuild": "NOT_INDEPENDENTLY_READ_FROM_DEVICE"
+  },
+  "globalSendEnabled": false,
+  "oldAcceptedTasksResent": false,
+  "historicalBlockedReset": false,
+  "finalQueueCounts": {
+    "BLOCKED_CONFIG": 4,
+    "ACCEPTED": 3
+  },
+  "pressureNotificationTasks": 0,
+  "newScopedSenderLocalRealPgTests": 15,
+  "priorUnchangedTestCounts": [
+    74,
+    53,
+    33
+  ],
+  "localLinuxArtifact": {
+    "sourceSha": "e91561238b866284bb6621a57fc02926fba01ec8",
+    "localCandidateImageId": "sha256:6704d3a8f8657c4aac6cf711651f8c430403179b72537fd425b108b56023cb05",
+    "candidateOciManifestDigest": "sha256:6704d3a8f8657c4aac6cf711651f8c430403179b72537fd425b108b56023cb05",
+    "candidateOciConfigDigest": "sha256:903b7e283d4f549f0588bddcf7e01f725512d2096bafc002e880d1a457202e9f",
+    "archiveBytes": 586725888,
+    "sourcePayloadTreeSha256": "902b42bc670b8cab9e5b8c779f71c916a15b13edbf89df9ac8b07388e94d5043"
+  },
+  "capacity": {
+    "baselineAvailableBytes": 13813653504,
+    "allowedAdditionalPeakBytes": 3076235264,
+    "dbBytes": 186571799,
+    "existingResourceAllowances": {
+      "backupLimit": 440252462,
+      "restoreLimit": 828150853,
+      "walLimit": 253680663,
+      "migratorLimit": 134217728
+    },
+    "ordinaryReserveBytes": 536870912,
+    "guardrails": {
+      "minAvailable": 10737418240,
+      "maxUsagePercent": 90,
+      "absoluteMaxAdditionalPeak": 6442450944
+    },
+    "phasedFullImportModel": {
+      "basis": "Existing deploy-prod-purchase-return.py capacity_plan() lines102-108; same migration-phase arithmetic, not permission to run its task-specific profile",
+      "phasePeaks": {
+        "import": 5288981150,
+        "database": 5532196625
+      },
+      "additionalPeakBytes": 5532196625,
+      "status": "FAIL_10GIB_FLOOR",
+      "deficitToAllowedPeakBytes": 2455961361,
+      "projectedAvailableBytes": 8281456879,
+      "projectedUsagePercentCeil": 90,
+      "absolute6GiBGuardPass": true
+    },
+    "legacySimultaneousStrictModel": {
+      "basis": "deploy-prod-transfer-cas.py shipping_disk_gate(resources, art) combines disk_budget peak with all DB resources",
+      "additionalPeakBytes": 6691602193,
+      "status": "FAIL_FLOOR_AND_ABSOLUTE_6GIB",
+      "deficitToAllowedPeakBytes": 3615366929,
+      "excessOverAbsolute6GiBBytes": 249151249
+    },
+    "backupWalAllowancesAreObservedActualOperations": false,
+    "maxWalSizeIsHardBound": false,
+    "freshBackupAndRestoreExecuted": false,
+    "baselineObservedAtUtc": "2026-10-25T19:21:42.879428+00:00"
+  },
+  "freshBackupOrRestorePerformed": false,
+  "templateIdsIdentityOrPrivateDataIncluded": false,
+  "candidateReady": false,
+  "remaining": [
+    "Capacity FAIL under current migration phased model",
+    "Task-specific exact90-to91 execution contract not bound; old frontend thin path does not cover server/prisma",
+    "Fresh backup/isolated recovery and release/migration/review/publish require new concrete authorization after preparation gates"
+  ],
+  "privateEvidenceDigests": {
+    "flash-send-execution.json": "7295333d37e7383e7cac229442e1ba90d2035dea8a2bcf1b8de1b4a3a8193532",
+    "flash-device-delivery.json": "945295fa008994127584aa7a3fd2c23754964b087d8d7553ed16ed5f3873ddcc",
+    "mail-pressure-device-result.json": "6eb2e0ae72f83b013636a8bb654eb4dc87268901a845881462f0a197dd481e8f",
+    "invoice-pressure-rejection-device-result.json": "3bdf91f01559ad5e6307d58ceed2174fd2a2dc02fd325cf393e2adc0b955533b",
+    "runtime-final-pressure-and-refusal.json": "23304a75d9436dcd31920c11d6e9b76a50c2a793bc48be8a2775cde17564661f",
+    "review-final-test-acceptance.json": "c2879d10cb38e32a2100b9fc077b45a9a0b4ed1dc0e108f601d389d9cb6827c9",
+    "release-artifact-summary.json": "7475a27023b21fc7f3bc6e45c0113558db832b56e52cb7de7ca8e483bc6dec2d",
+    "release-artifact-linux-image.json": "6bdfba7ee35ef547e1041b15617d13343fe31245448add4cc5275dfadef7d484",
+    "release-artifact-contract-draft.json": "2ccb55439388597df2670a2db3c1dff2d8b39696b5a87965aa3bd3824288de9b",
+    "capacity-readonly-after-unlock.json": "c30c50cb1074367c642a3f01c8102226815b9778f944c82912ec0b419d45e3c0",
+    "review-capacity-inputs.json": "75e0f770f270ae7e464bae568dfe43e2c672c80b234adec66f9a51f53414d74a",
+    "capacity-final-admission-summary.json": "847de8dba6dea2407608dab9b97dc9863e55a193c34620ae0efcc0358e51cf78",
+    "review-final-closeout.json": "6120202e2fa350e2fee381e6cde7a7a5022083036e790314e47f5cf765669b2c",
+    "review-final-capacity-binding.json": "b835cc02ab5694d7c0ae4c791930af6ab4f19724cbdf35b5140b285b0861d513"
+  },
+  "productionMutation": false,
+  "productionReadonlyAccessPerformed": true,
+  "finalCapacityEvidence": "capacity-final-admission-summary.json",
+  "finalIndependentReview": "PASS_ACCURATE_FINAL_CLOSEOUT_WITH_CAPACITY_AND_PROFILE_BLOCK"
+}
