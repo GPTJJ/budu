@@ -1,0 +1,82 @@
+{
+  "task": "BUDU-OFFLINE-TO-MINI-001",
+  "date": "2026-10-26",
+  "timezone": "Asia/Shanghai",
+  "status": "INTEGRATION_BLOCKED",
+  "sourceImplementationCommits": {
+    "os": "4bdea23503844c4ad743005e90ae83b91b70f6b9",
+    "miniprogram": "fd26c8fc853b68d05d28478b2ef1142259035f46"
+  },
+  "runtimeOsAtLastRead": "4bdea23503844c4ad743005e90ae83b91b70f6b9",
+  "taskBranch": "codex/offline-to-mini-001",
+  "tests": {
+    "messageFieldsVersions": 74,
+    "localRealPgReview": 28,
+    "localRealPgContract": 16,
+    "localRealPgStaff": 9,
+    "mpPage": 17,
+    "mpUtilityAfterStagingFix": 16
+  },
+  "templateAccountMetadata": "PASS_EXACT_IDS_TITLES_FIELDS_READ_ONLY",
+  "templateMappings": {
+    "MAILING_EXPRESS": {
+      "character_string5": "trackingNo",
+      "thing20": "carrier",
+      "thing13": "shipmentNote",
+      "time9": "shipmentConfirmedAt"
+    },
+    "MAILING_FLASH": {
+      "thing20": "carrier",
+      "time9": "shipmentConfirmedAt",
+      "thing13": "shipmentNote"
+    },
+    "INVOICE": {
+      "thing2": "invoiceTitle",
+      "amount3": "amount",
+      "time4": "submittedAt",
+      "thing5": "invoiceReceivedNote"
+    }
+  },
+  "realTemplateIdsIncluded": false,
+  "sourceIndependentReview": "PASS_AFTER_ASSOCIATION_FIX",
+  "remoteTestCodeAndConfig": "PASS_SEND_OFF",
+  "remoteTestBusinessFlow": "BLOCKED_STAFF_BROWSER_POLICY",
+  "actualSubscribeChoices": "NOT_RUN",
+  "actualPlatformSendAccepted": "NOT_RUN",
+  "actualDeviceMessages": "NOT_RUN",
+  "actualMessageDetailClicks": "NOT_RUN",
+  "newDevicePhysicalKeyboardAndForms": "NOT_RUN",
+  "ipadChannelRootCause": "BLOCKED",
+  "officialTestPreview": "PASS_DEVICE_NOT_RUN",
+  "sendEnabled": false,
+  "actualMessageSends": 0,
+  "productionMutation": false,
+  "newSchemaOrMigration": false,
+  "privateEvidenceDigests": {
+    "targeted-message-final.tap": "1967108acc76dd598c7e43394fed8690d1d9ee34758cb53c1e08fd818548d7e1",
+    "test-offline-service-review.mjs.association-fix.tap": "f4c4be940c70781687f82a5e0f3942382e84504aa70a22b424d579c6d3e723c3",
+    "test-offline-service-contract.mjs.association-fix.tap": "c28a99e7d300ff8c0ac98cb9ebc95fcbc6e89fc0cae758594521c22e1c4d87cb",
+    "test-offline-service-staff.mjs.association-fix.tap": "4ef56cefefe58edb76c70f7dcb1646953ce84baa39373be2215cb1d15486e2f0",
+    "mp-targeted-tests.tap": "1867c808b1503a6f2282f98880fe70befc2dd59a92315706feaaedd7ddf7f9bf",
+    "mp-service-tests-after-staging-fix.tap": "3c3682b6dd1f23d545fc81cd8ab0f790b4362e1f903f077be44e86bde8a851c8",
+    "account-template-verification.json": "1d0983854db62d9dc40c443aee902b86b3e3b94a9722c77b2623e226ea468668",
+    "adopted-message-body-capture.json": "e93cbdf2056b94fd950442364c08ceded1568b0272df3957070723df3202705c",
+    "independent-source-review-after-fix.json": "7fe176bb1beeb71e044843900e2f9a57887ceae0e9f32821ad2a96ada2a7f4c1",
+    "browser-access-after-setting-update.json": "bd956e6368f1d5033c4b8df71156616638faeb9cecc1cf678766654f614f3467",
+    "official-test-list-preview.json": "39f711f9850d46b3029106492917b531dfc5d603abc44d29d5c9073cdd02c354",
+    "test-runtime-update.json": "654039fb7fed27272960b51c30d1ed8e0d0373448cb005b9c819ad436c0e93e5",
+    "test-runtime-update-layout-fix.json": "698ac95031d8317a53832cd66a1dfc4b1a2366da405a1d6707179a19d6914142"
+  },
+  "failedAttemptsPreserved": [
+    "initial MP CJS staging missing two resources",
+    "initial source NEEDS association guard, repaired",
+    "TEST update startup PRIVATE_MODE, before mutation"
+  ],
+  "historyScope": {
+    "crossEndpointNative": "b93ea5ab050c7c04e6c01e74d4b8cd8a678dffb5",
+    "confirmationUiFix": "4e10963cec70a31db0477c18e3d100183e266257",
+    "completeIntegrationPass": false,
+    "completeDeviceAcceptance": false
+  },
+  "privacy": "No actual template IDs, private credentials, identities, form bodies or preview credentials in Git"
+}
