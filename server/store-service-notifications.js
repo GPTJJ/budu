@@ -34,12 +34,12 @@ function messageData(template, request, storeName) {
   }
   return data
 }
-export function createServiceWechatSender({ config, templates, fetchImpl = fetch, envVersion = 'release' }) {
+export function createServiceWechatSender({ config, templates, fetchImpl = fetch, envVersion = 'formal' }) {
   return async (delivery, request, storeName) => {
     const template = templates[request.type]
     if (!config?.enabled || !template || template.id !== delivery.templateId || template.semantic !== delivery.event
       || delivery.appId !== config.appId || delivery.envId !== config.cloudBaseEnvId
-      || !['release', 'developer', 'trial'].includes(envVersion)) return { status: 'BLOCKED_CONFIG', code: 'CONFIG' }
+      || !['formal', 'developer', 'trial'].includes(envVersion)) return { status: 'BLOCKED_CONFIG', code: 'CONFIG' }
     const data = messageData(template, request, storeName)
     if (!data) return { status: 'FAILED', code: 'FIELD_INVALID' }
     // Obtaining a token cannot send a customer message and is safe to retry boundedly.

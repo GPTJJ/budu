@@ -70,7 +70,7 @@
     "test:report-center:rc6a-migration": "node --test scripts/test-report-center-rc6a-migration-rehearsal.mjs",
     "test:report-center:rc6b": "node --test scripts/test-report-center-rc6a.mjs scripts/test-report-center-rc6b.mjs && playwright test --config=playwright.rc6b.config.mjs --project=ipad-webkit --workers=1",
     "test:report-center:final": "npm run test:report-center:rc2a && npm run test:report-center:rc2b && npm run test:report-center:rc2c && npm run test:report-center:rc3 && npm run test:report-center:rc5 && npm run test:report-center:rc6a && npm run test:report-center:rc6b",
-    "test:offline-service": "node --test scripts/test-offline-service-review.mjs scripts/test-offline-service-contract.mjs scripts/test-offline-service-migration.mjs scripts/test-offline-service-staff.mjs"
+    "test:offline-service": "node --test scripts/test-offline-service-review.mjs scripts/test-offline-service-contract.mjs scripts/test-offline-service-migration.mjs scripts/test-offline-service-staff.mjs scripts/test-store-service-message-versions.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

@@ -34,11 +34,11 @@ test('independent offline-service review: isolated database invariants', async t
   ] })
   await db.weChatAuthIdentity.createMany({ data: [a, b].map(identity => ({ id: uid(), provider: 'WECHAT_MINIPROGRAM', appId, openId: identity.openId, userId: identity.userId })) })
 
-  async function fixture(type = 'MAILING') {
+  async function fixture(type = 'MAILING', mailingMethod = '顺丰邮寄') {
     const storeKey = `review-${crypto.randomBytes(8).toString('hex')}`
     await db.store.create({ data: { key: storeKey, name: storeKey, active: true } })
     const created = await createCustomerServiceRequest({ prismaClient: db, user: DEV, origin: 'https://synthetic.example.invalid', input: {
-      type, storeKey, ...(type === 'MAILING' ? { method: '顺丰邮寄', postage: '包邮', shippingTier: 'STANDARD' } : { amountCents: 1200, category: '食品' }),
+      type, storeKey, ...(type === 'MAILING' ? { method: mailingMethod, postage: '包邮', shippingTier: 'STANDARD' } : { amountCents: 1200, category: '食品' }),
     } })
     const token = new URLSearchParams(new URL(created.publicUrl).hash.slice(1)).get('token')
     const scene = crypto.randomBytes(16).toString('hex')
@@ -248,6 +248,38 @@ test('independent offline-service review: isolated database invariants', async t
       assert.equal(detail.mailing.logisticsStatus, 'NOT_CONNECTED')
       assert.equal(await db.storeServiceDelivery.count({ where: { requestId: f.requestId } }), 1)
       assert.equal(await db.storeServiceAudit.count({ where: { requestId: f.requestId } }), 2)
+    })
+
+    await t.test('same-city delivery accepts a real proof without a waybill and preserves requester-only notification ownership', async () => {
+      const f = await fixture('MAILING', '同城闪送')
+      const selected = { MAILING: { id: 'synthetic-proof-compatible', semantic: 'SHIPMENT_CONFIRMED', fields: { thing1: 'status' } } }
+      await f.mini(a, { subscription: { status: 'accept', templateId: selected.MAILING.id } })
+      const proof = '合成验收配送凭证：请凭交接记录向门店核对'
+      await assert.rejects(confirmService(db, { requestId: f.requestId, user: DEV, action: 'shipment', templates: selected,
+        input: { carrier: '同城闪送' } }), { status: 400 })
+      assert.equal((await f.row()).shipmentConfirmedAt, null)
+      await confirmService(db, { requestId: f.requestId, user: DEV, action: 'shipment', templates: selected,
+        input: { deliveryProof: proof } })
+      const detail = await serviceDetail(db, f.requestId, a)
+      assert.equal(detail.mailing.method, '同城闪送')
+      assert.equal(detail.mailing.carrier, '同城闪送')
+      assert.equal(detail.mailing.trackingNo, null)
+      assert.equal(detail.mailing.deliveryProof, proof)
+      assert.equal(detail.mailing.status, 'shipped')
+      const delivery = await db.storeServiceDelivery.findFirst({ where: { requestId: f.requestId } })
+      assert.equal(delivery.status, 'PENDING')
+      assert.equal(delivery.openId, a.openId); assert.equal(delivery.userId, a.userId)
+      await assert.rejects(serviceDetail(db, f.requestId, b), { status: 404 })
+      assert.equal(await db.storeServiceAudit.count({ where: { requestId: f.requestId } }), 1)
+      assert.equal(await db.storeServiceDelivery.count({ where: { requestId: f.requestId } }), 1)
+      // Consume this fixture's event before the following global-worker test.
+      // This is a synthetic provider response, not a real platform send.
+      let syntheticSends = 0
+      await deliverStoreServiceOnce(db, async claimed => {
+        assert.equal(claimed.id, delivery.id); syntheticSends++
+        return { status: 'ACCEPTED', code: '0' }
+      })
+      assert.equal(syntheticSends, 1)
     })
 
     await t.test('outbox persistence failure rolls back the business confirmation', async () => {

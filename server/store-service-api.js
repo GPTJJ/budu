@@ -156,7 +156,7 @@ export function createStoreServiceStaffRouter({ db, env = process.env, configLoa
 export function createStoreServiceRuntime({ db, config, env = process.env, fetchImpl, deliverInternal = true }) {
   const router = createStoreServiceCustomerRouter({ db, config, env, deliverInternal })
   const send = createServiceWechatSender({ config, templates: serviceTemplates(env), fetchImpl,
-    envVersion: config.mode === 'production' ? 'release' : 'developer' })
+    envVersion: config.mode === 'production' ? 'formal' : 'developer' })
   let timer = null, busy = false
   const tick = async () => {
     if (busy || env.STORE_SERVICE_SEND_ENABLED !== '1') return
