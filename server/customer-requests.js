@@ -5,6 +5,7 @@ import { assertOperatingStore } from './store-operation-policy.js'
 import { listUsers } from './user-store.js'
 import { deliverCustomerRequestWecom, publicBaseUrl } from './notification-center.js'
 import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
+import { selectServiceTemplate, normalizeServiceSubscription } from './store-service-notifications.js'
 import {
   CUSTOMER_REQUEST_STATUS,
   CUSTOMER_REQUEST_TTL_MS,
@@ -238,7 +239,7 @@ function notificationData(type, request, businessRecordId) {
   }
 }
 
-export async function submitCustomerServiceRequest({ prismaClient = prisma, token, payload, now = new Date(), customerIdentity = null, miniScene = '', subscription = null, deliverInternal = true }) {
+export async function submitCustomerServiceRequest({ prismaClient = prisma, token, payload, now = new Date(), customerIdentity = null, miniScene = '', subscription = null, subscriptionTemplates = null, deliverInternal = true }) {
   // customerIdentity is supplied only by the authenticated server router, never req.body.
   const mini = Boolean(customerIdentity)
   const sceneHash = mini && /^[a-f0-9]{32}$/.test(miniScene) ? crypto.createHash('sha256').update(miniScene).digest('hex') : ''
@@ -273,6 +274,10 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
       const input = tokenRow.request.type === CUSTOMER_REQUEST_TYPES.MAILING
         ? validateMailingSubmission(payload)
         : validateInvoiceSubmission(payload)
+      // Revalidate against the locked request's saved method. These templates
+      // come from server config, never the submitted body or a pre-lock read.
+      const subscriptionDecision = mini && subscriptionTemplates !== null
+        ? normalizeServiceSubscription(selectServiceTemplate(subscriptionTemplates, tokenRow.request), subscription) : subscription
       const tokenClaim = await tx.customerServiceRequestToken.updateMany({
         where: { id: tokenRow.id, status: 'ACTIVE', consumedAt: null, expiresAt: { gt: now } },
         data: { status: 'CONSUMED', consumedAt: now },
@@ -282,7 +287,9 @@ export async function submitCustomerServiceRequest({ prismaClient = prisma, toke
         data: { status: CUSTOMER_REQUEST_STATUS.SUBMITTED, submittedAt: now, updatedAt: now,
           ...(mini ? { customerUserId: customerIdentity.userId, customerAppId: customerIdentity.appId,
             customerEnvId: customerIdentity.envId, customerOpenId: customerIdentity.openId,
-            subscriptionChoice: subscription?.status || 'unavailable', subscriptionTemplateId: subscription?.templateId || null } : {}) },
+            subscriptionChoice: subscriptionDecision?.status || 'unavailable', subscriptionTemplateId: subscriptionDecision?.templateId || null,
+            ...(subscriptionTemplates !== null ? { requestMetadata: { ...tokenRow.request.requestMetadata,
+              subscriptionValidation: subscriptionDecision.validation } } : {}) } : {}) },
       })
       if (tokenClaim.count !== 1 || requestClaim.count !== 1) {
         throw httpError('该资料已经提交，请勿重复提交', 409)

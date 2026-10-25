@@ -271,6 +271,59 @@ test('real PostgreSQL + real HTTP + companion MiniProgram gateway contract', asy
       assert.ok(!JSON.stringify(detail).includes(DEV.username))
       assert.equal(detail.result.notification.status, 'BLOCKED_CONFIG')
     })
+    await t.test('signed companion resolves exactly one method template and submit ignores forged methods and template configuration', async () => {
+      const definitions = {
+        MAILING_EXPRESS: { id: 'synthetic-http-express-template', verified: true, semantic: 'SHIPMENT_CONFIRMED', fields: {
+          character_string5: 'trackingNo', thing20: 'carrier', thing13: 'shipmentNote', time9: 'shipmentConfirmedAt' } },
+        MAILING_FLASH: { id: 'synthetic-http-flash-template', verified: true, semantic: 'SHIPMENT_CONFIRMED', fields: {
+          thing20: 'carrier', time9: 'shipmentConfirmedAt', thing13: 'shipmentNote' } },
+        INVOICE: { id: 'synthetic-http-invoice-template', verified: true, semantic: 'INVOICE_RECEIVED', fields: {
+          thing2: 'invoiceTitle', amount3: 'amount', time4: 'submittedAt', thing5: 'invoiceReceivedNote' } },
+      }
+      const modernEnv = { ...env, STORE_SERVICE_SUBMISSIONS_ENABLED: '1', STORE_SERVICE_TEMPLATE_CONFIG: JSON.stringify(definitions) }
+      const modernApp = express(), modernRuntime = createStoreServiceRuntime({ db, config, env: modernEnv, deliverInternal: false, fetchImpl: noProvider })
+      modernRuntime.mount(modernApp)
+      const modernServer = await listenLocal(http.createServer(modernApp)), modernForwarded = []
+      const modernProxy = await listenLocal(createTestPrefixProxy(modernServer.address().port, modernForwarded))
+      const customer = handler('a', modernProxy.address().port), other = handler('b', modernProxy.address().port)
+      try {
+        assert.equal((await call(customer, 'a', 'serviceCapabilities')).result.templateIds.MAILING, '')
+        for (const [kind, wrong] of [['MAILING_EXPRESS', false], ['MAILING_FLASH', false], ['INVOICE', false], ['MAILING_EXPRESS', true]]) {
+          const type = kind === 'INVOICE' ? 'INVOICE' : 'MAILING', flash = kind === 'MAILING_FLASH'
+          const created = await createCustomerServiceRequest({ prismaClient: db, user: DEV, origin: 'https://synthetic.invalid', input: {
+            type, storeKey: 'http-store', ...(type === 'INVOICE' ? { amountCents: 1200, category: '食品' }
+              : { method: flash ? '同城闪送' : '顺丰邮寄', postage: '包邮', shippingTier: 'STANDARD' }) } })
+          await generateStoreServiceCode({ db, requestId: created.request.id, user: DEV, config, env: modernEnv, fetchImpl: qrFetch })
+          const currentScene = generatedScene
+          const resolved = await call(customer, 'a', 'serviceResolve', { scene: currentScene, method: 'forged', templateId: 'forged' })
+          assert.equal(resolved.ok, true); assert.equal(resolved.result.subscriptionTemplateId, definitions[kind].id)
+          const provided = wrong ? definitions.MAILING_FLASH.id : definitions[kind].id
+          const payload = type === 'INVOICE'
+            ? { titleType: 'PERSONAL', invoiceTitle: '合成HTTP个人抬头', email: 'http@example.invalid', confirmedAccurate: true }
+            : { recipient: '合成HTTP收件人', phone: '13800000000', address: '合成HTTP测试地址一号', confirmedAccurate: true,
+              method: flash ? '顺丰邮寄' : '同城闪送', carrier: 'forged' }
+          const saved = await call(customer, 'a', 'serviceSubmit', { scene: currentScene, payload,
+            method: 'forged', subscriptionTemplates: { INVOICE: { id: 'forged' } }, subscription: { status: 'accept', templateId: provided } })
+          assert.equal(saved.ok, true); assert.equal(saved.result.requestId, created.request.id)
+          const row = await db.customerServiceRequest.findUnique({ where: { id: created.request.id } })
+          assert.equal(row.subscriptionTemplateId, provided); assert.equal(row.subscriptionChoice, wrong ? 'unavailable' : 'accept')
+          assert.equal(row.requestMetadata.subscriptionValidation.matched, !wrong)
+          const detail = await call(customer, 'a', 'serviceDetail', { requestId: row.id })
+          assert.equal(detail.ok, true)
+          if (type === 'MAILING') assert.equal(detail.result.mailing.method, flash ? '同城闪送' : '顺丰邮寄')
+          else assert.equal(detail.result.invoice.status, 'pending')
+          assert.equal((await call(other, 'b', 'serviceDetail', { requestId: row.id })).code, 'SERVICE_NOT_FOUND')
+          await confirmService(db, { requestId: row.id, user: DEV, action: type === 'INVOICE' ? 'receipt' : 'shipment',
+            templates: serviceTemplates(modernEnv), input: { carrier: '合成承运', trackingNo: 'SYNTHETICHTTP123', deliveryProof: '合成HTTP配送凭证' } })
+          const notification = await db.storeServiceDelivery.findFirst({ where: { requestId: row.id } })
+          assert.equal(notification.templateId, provided); assert.equal(notification.status, wrong ? 'BLOCKED_CONFIG' : 'PENDING')
+          assert.equal(notification.userId, 'http-a'); assert.equal(notification.openId, 'synthetic-a')
+          assert.equal(notification.attempts, 0)
+          assert.equal((await call(customer, 'a', 'serviceResolve', { scene: currentScene })).result.submittedRequestId, row.id)
+        }
+        assert.equal(await db.onlineSettlement.count(), 0)
+      } finally { modernRuntime.stop(); await closeLocal(modernProxy); await closeLocal(modernServer) }
+    })
   } finally {
     runtime.stop(); await closeLocal(proxy); await closeLocal(server); await db.$disconnect(); await dropDisposablePgDatabase(url)
   }
@@ -300,8 +353,11 @@ test('sender distinguishes platform acceptance, permission rejection, definite c
   const templates = serviceTemplates({ STORE_SERVICE_TEMPLATE_CONFIG: JSON.stringify({ INVOICE: template }) })
   assert.equal(serviceTemplates({ STORE_SERVICE_TEMPLATE_CONFIG: JSON.stringify({ INVOICE: { ...template, semantic: 'INVOICE_ISSUED' } }) }).INVOICE, undefined)
   const config = { enabled: true, appId, appSecret: 'synthetic', cloudBaseEnvId: envId }
-  const d = { templateId: template.id, event: 'INVOICE_RECEIVED', openId: 'synthetic-a', appId, envId }
-  const r = { id: 'csr-' + uuid(), type: 'INVOICE' }
+  const d = { templateId: template.id, event: 'INVOICE_RECEIVED', userId: 'synthetic-owner', openId: 'synthetic-a', appId, envId }
+  const r = { id: 'csr-' + uuid(), type: 'INVOICE', linkedBusinessRecordId: 'synthetic-classification-invoice', storeKey: 'http-store',
+    subscriptionChoice: 'accept', subscriptionTemplateId: template.id, customerUserId: d.userId,
+    customerOpenId: d.openId, customerAppId: appId, customerEnvId: envId }
+  const invoice = { id: r.linkedBusinessRecordId, storeKey: r.storeKey, companyName: '合成抬头', amountCents: 1200n, deletedAt: null }
   for (const [response, expected] of [[0, 'ACCEPTED'], [43101, 'NO_PERMISSION'], [47003, 'BLOCKED_CONFIG'], [40003, 'FAILED'], [null, 'UNKNOWN']]) {
     _resetMiniprogramTokenAuthority()
     let sends = 0
@@ -312,6 +368,6 @@ test('sender distinguishes platform acceptance, permission rejection, definite c
       if (response === null) throw Error('synthetic timeout after request write')
       return { ok: true, json: async () => ({ errcode: response }) }
     } })
-    assert.equal((await send(d, r, '合成门店')).status, expected); assert.equal(sends, 1)
+    assert.equal((await send(d, r, '合成门店', invoice)).status, expected); assert.equal(sends, 1)
   }
 })

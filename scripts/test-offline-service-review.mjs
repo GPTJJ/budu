@@ -25,7 +25,8 @@ test('independent offline-service review: isolated database invariants', async t
   globalThis.__buduPrisma = db
   const { createCustomerServiceRequest, submitCustomerServiceRequest, resolvePublicCustomerRequest } = await import('../server/customer-requests.js')
   const { confirmService, serviceDetail, listCustomerServices, resolveServiceScene } = await import('../server/store-service-core.js')
-  const { deliverStoreServiceOnce } = await import('../server/store-service-notifications.js')
+  const { deliverStoreServiceOnce, serviceTemplates, createServiceWechatSender } = await import('../server/store-service-notifications.js')
+  const { _resetMiniprogramTokenAuthority } = await import('../server/wechat-access-token.js')
   const a = { userId: 'review-customer-a', appId, envId, openId: 'synthetic-openid-a' }
   const b = { userId: 'review-customer-b', appId, envId, openId: 'synthetic-openid-b' }
   await db.user.createMany({ data: [
@@ -294,6 +295,182 @@ test('independent offline-service review: isolated database invariants', async t
       assert.equal((await db.mailingRecord.findUnique({ where: { id: row.linkedBusinessRecordId } })).status, 'pending')
       assert.equal(await db.storeServiceDelivery.count({ where: { requestId: f.requestId } }), 0)
       assert.equal(await db.storeServiceAudit.count({ where: { requestId: f.requestId } }), 0)
+    })
+
+    const modernTemplates = serviceTemplates({ STORE_SERVICE_TEMPLATE_CONFIG: JSON.stringify({
+      MAILING_EXPRESS: { id: 'synthetic-review-express', verified: true, semantic: 'SHIPMENT_CONFIRMED', fields: {
+        character_string5: 'trackingNo', thing20: 'carrier', thing13: 'shipmentNote', time9: 'shipmentConfirmedAt' } },
+      MAILING_FLASH: { id: 'synthetic-review-flash', verified: true, semantic: 'SHIPMENT_CONFIRMED', fields: {
+        thing20: 'carrier', time9: 'shipmentConfirmedAt', thing13: 'shipmentNote' } },
+      INVOICE: { id: 'synthetic-review-invoice', verified: true, semantic: 'INVOICE_RECEIVED', fields: {
+        thing2: 'invoiceTitle', amount3: 'amount', time4: 'submittedAt', thing5: 'invoiceReceivedNote' } },
+    }) })
+    const workerNow = new Date('2027-01-02T00:00:00Z')
+    function captureSender(selected = modernTemplates) {
+      _resetMiniprogramTokenAuthority(); const messages = []
+      const send = createServiceWechatSender({ config: { enabled: true, appId, cloudBaseEnvId: envId, appSecret: 'synthetic-only' },
+        templates: selected, envVersion: 'developer', fetchImpl: async (url, input) => {
+          if (url.includes('/stable_token')) return { ok: true, json: async () => ({ access_token: 'synthetic-token', expires_in: 7200 }) }
+          messages.push(JSON.parse(input.body)); return { ok: true, json: async () => ({ errcode: 0 }) }
+        } })
+      return { send, messages }
+    }
+    await t.test('three modern scenes keep one authorized ID through persisted request, confirmation and real PG outbox', async () => {
+      for (const kind of ['MAILING_EXPRESS', 'MAILING_FLASH', 'INVOICE_COMPANY', 'INVOICE_PERSONAL']) {
+        const isInvoice = kind.startsWith('INVOICE'), flash = kind === 'MAILING_FLASH'
+        const selected = modernTemplates[isInvoice ? 'INVOICE' : kind]
+        const f = await fixture(isInvoice ? 'INVOICE' : 'MAILING', flash ? '同城闪送' : '顺丰邮寄')
+        const title = '合成完整长抬头'.repeat(6)
+        const payload = isInvoice ? { ...invoice, titleType: kind === 'INVOICE_PERSONAL' ? 'PERSONAL' : 'ENTERPRISE', invoiceTitle: title,
+          note: '顾客备注不能成为收到申请说明' } : { ...mailing, method: flash ? '顺丰邮寄' : '同城闪送', carrier: 'forged' }
+        await f.mini(a, { payload, subscriptionTemplates: modernTemplates, subscription: { status: 'accept', templateId: selected.id } })
+        let row = await f.row()
+        assert.equal(row.subscriptionTemplateId, selected.id); assert.equal(row.subscriptionChoice, 'accept')
+        assert.equal(row.requestMetadata.subscriptionValidation.matched, true)
+        await db.customerServiceRequest.update({ where: { id: f.requestId }, data: {
+          submittedAt: new Date('2026-10-25T15:59:00Z'), requestMetadata: { ...row.requestMetadata, amountCents: 1 } } })
+        const input = flash ? { carrier: '合成承运服务', deliveryProof: '合成真实配送凭证，请凭交接记录核对' }
+          : { carrier: '合成承运服务', trackingNo: 'SYNTHETIC123456' }
+        if (flash) {
+          await assert.rejects(confirmService(db, { requestId: f.requestId, user: DEV, action: 'shipment', templates: modernTemplates,
+            input: { carrier: '合成承运服务' } }), { status: 400 })
+          assert.equal(await db.storeServiceDelivery.count({ where: { requestId: f.requestId } }), 0)
+        }
+        const confirmation = { requestId: f.requestId, user: DEV, action: isInvoice ? 'receipt' : 'shipment', input,
+          templates: modernTemplates, now: new Date('2026-10-25T16:03:00Z') }
+        await confirmService(db, confirmation); assert.equal((await confirmService(db, confirmation)).alreadyConfirmed, true)
+        const d = await db.storeServiceDelivery.findFirst({ where: { requestId: f.requestId } })
+        assert.equal(d.templateId, selected.id); assert.equal(d.status, 'PENDING'); assert.equal(d.openId, a.openId)
+        const provider = captureSender()
+        assert.equal((await deliverStoreServiceOnce(db, provider.send, { now: workerNow })).status, 'ACCEPTED')
+        assert.equal(provider.messages.length, 1)
+        const body = provider.messages[0]
+        assert.equal(body.template_id, selected.id); assert.equal(body.touser, a.openId)
+        assert.equal(body.page, `pages/store-service/detail?id=${f.requestId}`); assert.equal(body.miniprogram_state, 'developer')
+        const detail = await serviceDetail(db, f.requestId, a)
+        if (isInvoice) {
+          assert.deepEqual(Object.keys(body.data), ['thing2', 'amount3', 'time4', 'thing5'])
+          assert.equal(body.data.thing2.value, [...title].slice(0, 19).join('') + '…')
+          assert.equal(body.data.amount3.value, '￥12.00'); assert.equal(body.data.time4.value, '2026年10月25日 23:59')
+          assert.equal(body.data.thing5.value, '申请已收到，待财务办理，请留意邮箱')
+          assert.equal(detail.invoice.invoiceTitle, title); assert.equal(detail.invoice.status, 'pending')
+          const actual = await db.invoice.findUnique({ where: { id: row.linkedBusinessRecordId } })
+          assert.equal(actual.companyName, title); assert.equal(actual.amountCents, 1200n)
+          assert.equal(actual.titleType, kind === 'INVOICE_PERSONAL' ? 'personal' : 'company')
+        } else {
+          assert.equal(detail.mailing.method, flash ? '同城闪送' : '顺丰邮寄')
+          assert.equal(body.data.time9.value, '2026年10月26日 00:03')
+          assert.equal(body.data.thing20.value, '合成承运服务')
+          assert.equal(body.data.thing13.value, flash ? '商家已确认发出，点击查看配送凭证' : '商家已确认发货，点击查看配送详情')
+          assert.deepEqual(Object.keys(body.data), flash ? ['thing20', 'time9', 'thing13'] : ['character_string5', 'thing20', 'thing13', 'time9'])
+          assert.equal(detail.mailing.trackingNo, flash ? null : input.trackingNo)
+          if (flash) assert.equal(detail.mailing.deliveryProof, input.deliveryProof)
+        }
+        await assert.rejects(serviceDetail(db, f.requestId, b), { status: 404 })
+        assert.equal(await db.storeServiceDelivery.count({ where: { requestId: f.requestId } }), 1)
+        assert.equal(await db.storeServiceAudit.count({ where: { requestId: f.requestId } }), 1)
+        assert.equal((await deliverStoreServiceOnce(db, provider.send, { now: workerNow })).processed, false)
+        assert.equal(provider.messages.length, 1)
+      }
+    })
+    await t.test('spoofed ID, configuration change and saved method change never upgrade old accept or block form saving', async () => {
+      for (const kind of ['spoofed-id', 'configuration-change', 'saved-method-change']) {
+        const f = await fixture(), initial = await f.row()
+        const expectedAtSubmit = kind === 'configuration-change'
+          ? { ...modernTemplates, MAILING_EXPRESS: { ...modernTemplates.MAILING_EXPRESS, id: 'synthetic-replacement-express' } } : modernTemplates
+        if (kind === 'saved-method-change') await db.customerServiceRequest.update({ where: { id: f.requestId },
+          data: { requestMetadata: { ...initial.requestMetadata, method: '同城闪送' } } })
+        const providedId = kind === 'spoofed-id' ? modernTemplates.MAILING_FLASH.id : modernTemplates.MAILING_EXPRESS.id
+        const payload = { ...mailing, method: kind === 'saved-method-change' ? '顺丰邮寄' : '同城闪送' }
+        const result = await f.mini(a, { payload, subscriptionTemplates: expectedAtSubmit, subscription: { status: 'accept', templateId: providedId } })
+        assert.equal(result.requestId, f.requestId)
+        let row = await f.row()
+        assert.equal(row.subscriptionTemplateId, providedId); assert.equal(row.subscriptionChoice, 'unavailable')
+        assert.equal(row.requestMetadata.subscriptionValidation.reportedChoice, 'accept')
+        assert.equal(row.requestMetadata.subscriptionValidation.matched, false)
+        const confirmation = { requestId: f.requestId, user: DEV, action: 'shipment', templates: expectedAtSubmit,
+          input: { carrier: '合成承运', trackingNo: 'SYNTHETIC123456', deliveryProof: '合成交接凭证' } }
+        await confirmService(db, confirmation)
+        const d = await db.storeServiceDelivery.findFirst({ where: { requestId: f.requestId } })
+        assert.equal(d.templateId, providedId); assert.equal(d.status, 'BLOCKED_CONFIG')
+        assert.equal(d.platformCode, 'SUBSCRIPTION_TEMPLATE_MISMATCH')
+        const currentId = row.requestMetadata.subscriptionValidation.expectedTemplateId
+        await f.mini(a, { payload: { ...payload, recipient: '不得重写资料' }, subscriptionTemplates: expectedAtSubmit,
+          subscription: { status: 'accept', templateId: currentId } })
+        row = await f.row(); assert.equal(row.subscriptionTemplateId, providedId); assert.equal(row.subscriptionChoice, 'unavailable')
+        const detail = await serviceDetail(db, f.requestId, a)
+        assert.equal(detail.mailing.recipient, mailing.recipient)
+        assert.equal(detail.mailing.method, kind === 'saved-method-change' ? '同城闪送' : '顺丰邮寄')
+        const provider = captureSender(expectedAtSubmit)
+        assert.equal((await deliverStoreServiceOnce(db, provider.send, { now: workerNow })).processed, false)
+        assert.equal(provider.messages.length, 0)
+      }
+    })
+    await t.test('configuration or business method changes after confirmation block the saved task without changing its ID', async () => {
+      for (const kind of ['configuration', 'business-method']) {
+        const f = await fixture()
+        await f.mini(a, { subscriptionTemplates: modernTemplates, subscription: { status: 'accept', templateId: modernTemplates.MAILING_EXPRESS.id } })
+        await confirmService(db, { requestId: f.requestId, user: DEV, action: 'shipment', templates: modernTemplates,
+          input: { carrier: '合成承运', trackingNo: 'SYNTHETIC123456' } })
+        const row = await f.row()
+        let configured = modernTemplates
+        if (kind === 'configuration') configured = { ...modernTemplates, MAILING_EXPRESS: { ...modernTemplates.MAILING_EXPRESS, id: 'synthetic-later-template' } }
+        else await db.mailingRecord.update({ where: { id: row.linkedBusinessRecordId }, data: { method: '同城闪送' } })
+        const provider = captureSender(configured)
+        assert.equal((await deliverStoreServiceOnce(db, provider.send, { now: workerNow })).status, 'BLOCKED_CONFIG')
+        const saved = await db.storeServiceDelivery.findFirst({ where: { requestId: f.requestId } })
+        assert.equal(saved.templateId, modernTemplates.MAILING_EXPRESS.id)
+        assert.equal(saved.platformCode, kind === 'configuration' ? 'TEMPLATE_NOT_CONFIGURED_OR_CHANGED' : 'DELIVERY_METHOD_CHANGED')
+        assert.equal((await f.row()).subscriptionTemplateId, modernTemplates.MAILING_EXPRESS.id)
+        assert.equal(provider.messages.length, 0)
+        assert.equal((await deliverStoreServiceOnce(db, provider.send, { now: workerNow })).processed, false)
+      }
+    })
+    await t.test('missing or deleted linked invoice fails explicitly without invented amount/title or an external request', async () => {
+      for (const deleted of [false, true]) {
+        const f = await fixture('INVOICE')
+        await f.mini(a, { subscriptionTemplates: modernTemplates, subscription: { status: 'accept', templateId: modernTemplates.INVOICE.id } })
+        await confirmService(db, { requestId: f.requestId, user: DEV, action: 'receipt', templates: modernTemplates })
+        const row = await f.row()
+        if (deleted) await db.invoice.update({ where: { id: row.linkedBusinessRecordId }, data: { deletedAt: new Date() } })
+        else await db.invoice.delete({ where: { id: row.linkedBusinessRecordId } })
+        const provider = captureSender()
+        assert.equal((await deliverStoreServiceOnce(db, provider.send, { now: workerNow })).status, 'FAILED')
+        assert.equal(provider.messages.length, 0)
+        const d = await db.storeServiceDelivery.findFirst({ where: { requestId: f.requestId } })
+        assert.equal(d.platformCode, 'INVOICE_RECORD_UNAVAILABLE')
+        await assert.rejects(serviceDetail(db, f.requestId, a), { status: 409, code: 'SERVICE_RECORD_UNAVAILABLE' })
+        await assert.rejects(serviceDetail(db, f.requestId, b), { status: 404 })
+        assert.equal((await f.row()).customerUserId, a.userId)
+      }
+    })
+
+    await t.test('foreign-store business links reject detail, first/repeated confirmation and correction without side effects', async () => {
+      const foreignKey = 'review-foreign-' + uid()
+      await db.store.create({ data: { key: foreignKey, name: '合成其他门店', active: true } })
+      for (const type of ['MAILING', 'INVOICE']) for (const confirmed of [false, true]) {
+        const f = await fixture(type), selected = modernTemplates[type === 'INVOICE' ? 'INVOICE' : 'MAILING_EXPRESS']
+        await f.mini(a, { subscriptionTemplates: modernTemplates, subscription: { status: 'accept', templateId: selected.id } })
+        const input = { carrier: '合成承运', trackingNo: 'SYNTHETIC123456', reason: '合成更正原因' }
+        const confirmation = { requestId: f.requestId, user: DEV, action: type === 'INVOICE' ? 'receipt' : 'shipment', input, templates: modernTemplates }
+        if (confirmed) {
+          await confirmService(db, confirmation)
+          const provider = captureSender()
+          assert.equal((await deliverStoreServiceOnce(db, provider.send, { now: workerNow })).status, 'ACCEPTED')
+        }
+        const row = await f.row(), model = type === 'INVOICE' ? db.invoice : db.mailingRecord
+        await model.update({ where: { id: row.linkedBusinessRecordId }, data: { storeKey: foreignKey } })
+        const snapshot = async () => ({ request: await f.row(), business: await model.findUnique({ where: { id: row.linkedBusinessRecordId } }),
+          audit: await db.storeServiceAudit.findMany({ where: { requestId: f.requestId }, orderBy: { id: 'asc' } }),
+          outbox: await db.storeServiceDelivery.findMany({ where: { requestId: f.requestId }, orderBy: { id: 'asc' } }) })
+        const before = await snapshot()
+        await assert.rejects(serviceDetail(db, f.requestId, a), { status: 409, code: 'SERVICE_RECORD_UNAVAILABLE' })
+        await assert.rejects(serviceDetail(db, f.requestId, null, DEV), { status: 409, code: 'SERVICE_RECORD_UNAVAILABLE' })
+        await assert.rejects(serviceDetail(db, f.requestId, b), { status: 404 })
+        await assert.rejects(confirmService(db, confirmation), { status: 409 })
+        if (type === 'MAILING') await assert.rejects(confirmService(db, { ...confirmation, action: 'correct-shipment' }), { status: 409 })
+        assert.deepEqual(await snapshot(), before)
+      }
     })
 
     const templates = { MAILING: { id: 'synthetic-review-template', semantic: 'SHIPMENT_CONFIRMED', fields: { thing1: 'status' } } }

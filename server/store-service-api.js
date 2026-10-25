@@ -7,7 +7,7 @@ import { miniprogramAccessToken } from './wechat-access-token.js'
 import { createFixedWindowLimiter, httpError } from './customer-request-core.js'
 import { submitCustomerServiceRequest } from './customer-requests.js'
 import { assertServiceStaff, serviceDetail, resolveServiceScene, listCustomerServices, recordServiceVisit, sceneHash, confirmService } from './store-service-core.js'
-import { serviceTemplates, createServiceWechatSender, deliverStoreServiceOnce } from './store-service-notifications.js'
+import { serviceTemplates, selectServiceTemplate, createServiceWechatSender, deliverStoreServiceOnce } from './store-service-notifications.js'
 import { queryServiceConversion } from './store-service-conversion.js'
 
 const TEST_ENV = 'budu-test-d8gwb4xwy41dc6c61'
@@ -40,6 +40,7 @@ function verifyServiceGateway(req, config, replayGuard) {
   if (!equal(signature, expected) || !replayGuard.consume(nonce, Number(timestamp))) throw httpError('身份核验失败', 401)
 }
 const publicCode = error => error.code === 'SERVICE_DISABLED' ? 'SERVICE_DISABLED' : error.code === 'STORE_CLOSED' ? 'STORE_CLOSED'
+  : error.code === 'SERVICE_RECORD_UNAVAILABLE' ? 'SERVICE_UNAVAILABLE'
   : error.status === 401 ? 'CUSTOMER_SESSION_EXPIRED' : error.status === 403 ? 'CUSTOMER_SESSION_DENIED'
     : error.status === 404 ? 'SERVICE_NOT_FOUND' : error.status === 410 ? 'SERVICE_CODE_EXPIRED'
       : error.status === 409 ? 'SERVICE_CODE_USED' : error.status === 400 ? 'SERVICE_INVALID_INPUT'
@@ -68,8 +69,11 @@ export function createStoreServiceCustomerRouter({ db, config, env = process.env
   }
   const admissions = () => { if (env.STORE_SERVICE_SUBMISSIONS_ENABLED !== '1') throw Object.assign(httpError('服务暂未开放', 503), { code: 'SERVICE_DISABLED' }) }
   router.post('/capabilities', handle(async () => ({ enabled: env.STORE_SERVICE_SUBMISSIONS_ENABLED === '1', templateIds: {
-    MAILING: templates.MAILING?.id || '', INVOICE: templates.INVOICE?.id || '' } })))
-  router.post('/resolve', handle(async (body, customer) => resolveServiceScene(db, body.scene, customer)))
+    MAILING: '', INVOICE: templates.INVOICE?.id || '' } })))
+  router.post('/resolve', handle(async (body, customer) => {
+    const result = await resolveServiceScene(db, body.scene, customer)
+    return { ...result, subscriptionTemplateId: result.submittedRequestId ? '' : selectServiceTemplate(templates, result.request)?.id || '' }
+  }))
   router.post('/submit', handle(async (body, customer) => {
     // Same-owner response recovery remains available when new admissions are off.
     if (env.STORE_SERVICE_SUBMISSIONS_ENABLED !== '1') {
@@ -77,12 +81,8 @@ export function createStoreServiceCustomerRouter({ db, config, env = process.env
       if (existing.submittedRequestId) return { requestId: existing.submittedRequestId, type: existing.request.type, status: 'SUBMITTED' }
       admissions()
     }
-    const t = await db.customerServiceRequestToken.findUnique({ where: { miniSceneHash: sceneHash(body.scene) || 'invalid' }, include: { request: true } })
-    const template = templates[t?.request.type]
-    const subscription = { status: ['accept', 'reject', 'cancel', 'unavailable'].includes(body.subscription?.status) ? body.subscription.status : 'unavailable',
-      templateId: template?.id && body.subscription?.templateId === template.id ? template.id : null }
     return submitCustomerServiceRequest({ prismaClient: db, miniScene: body.scene, payload: body.payload,
-      customerIdentity: customer, subscription, deliverInternal })
+      customerIdentity: customer, subscription: body.subscription, subscriptionTemplates: templates, deliverInternal })
   }))
   router.post('/list', handle((body, customer) => listCustomerServices(db, customer, body)))
   router.post('/detail', handle((body, customer) => serviceDetail(db, body.requestId, customer)))

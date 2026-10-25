@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../shared/accountPermissions.js'
 import { httpError } from './customer-request-core.js'
+import { selectServiceTemplate } from './store-service-notifications.js'
 
 export const sceneHash = scene => /^[a-f0-9]{32}$/.test(scene || '') ? crypto.createHash('sha256').update(scene).digest('hex') : ''
 const uid = prefix => `${prefix}-${crypto.randomUUID()}`
@@ -22,6 +23,8 @@ export async function serviceDetail(db, requestId, customer, staff = null) {
   const r = await db.customerServiceRequest.findUnique({ where: { id: requestId }, include: { store: true } })
   if (!r || (!staff && !ownsService(r, customer))) throw httpError('申请不存在', 404)
   if (staff) assertServiceStaff(staff, r)
+  const unavailableRecord = () => Object.assign(httpError(r.type === 'INVOICE' ? '开票记录不可用' : '邮寄记录不可用', 409), { code: 'SERVICE_RECORD_UNAVAILABLE' })
+  if (r.status === 'SUBMITTED' && !r.linkedBusinessRecordId) throw unavailableRecord()
   const deliveries = await db.storeServiceDelivery.findMany({ where: { requestId }, orderBy: { createdAt: 'desc' },
     select: { id: true, event: true, status: true, attempts: true, platformCode: true, acceptedAt: true, createdAt: true } })
   const request = requestPresentation(r, r.store.name)
@@ -30,12 +33,14 @@ export async function serviceDetail(db, requestId, customer, staff = null) {
   let mailing = null, invoice = null
   if (r.linkedBusinessRecordId && r.type === 'MAILING') {
     const m = await db.mailingRecord.findUnique({ where: { id: r.linkedBusinessRecordId } })
-    if (m && !m.deletedAt) mailing = { recipient: m.recipient, phone: m.phone, address: m.address, remark: m.remark,
+    if (!m || m.deletedAt || m.storeKey !== r.storeKey) throw unavailableRecord()
+    mailing = { recipient: m.recipient, phone: m.phone, address: m.address, remark: m.remark,
       method: m.method, postage: m.postage, carrier: r.carrier, trackingNo: r.trackingNo,
       deliveryProof: r.deliveryProof, confirmedAt: r.shipmentConfirmedAt, status: m.status, logisticsStatus: 'NOT_CONNECTED' }
   } else if (r.linkedBusinessRecordId && r.type === 'INVOICE') {
     const i = await db.invoice.findUnique({ where: { id: r.linkedBusinessRecordId } })
-    if (i && !i.deletedAt) invoice = { invoiceTitle: i.companyName, titleType: i.titleType, taxNo: i.taxNo, email: i.email,
+    if (!i || i.deletedAt || i.storeKey !== r.storeKey) throw unavailableRecord()
+    invoice = { invoiceTitle: i.companyName, titleType: i.titleType, taxNo: i.taxNo, email: i.email,
       amountCents: String(i.amountCents), category: i.category, note: i.note, status: i.status, receivedAt: r.receiptConfirmedAt }
   }
   if (staff) request.notifications = deliveries
@@ -112,19 +117,22 @@ export async function confirmService(db, { requestId, user, action, input = {}, 
     if (r.status !== 'SUBMITTED' || !r.customerUserId) throw httpError('该申请未绑定小程序顾客', 409)
     const receipt = action === 'receipt', correction = action === 'correct-shipment'
     if ((receipt && r.type !== 'INVOICE') || (!receipt && r.type !== 'MAILING')) throw httpError('申请类型不符', 400)
+    if (!r.linkedBusinessRecordId) throw httpError('关联业务记录不可用', 409)
     if (receipt) {
       await tx.$queryRawUnsafe('SELECT id FROM "Invoice" WHERE id = $1 FOR UPDATE', r.linkedBusinessRecordId)
       const invoice = await tx.invoice.findUnique({ where: { id: r.linkedBusinessRecordId } })
-      if (!invoice || invoice.deletedAt) throw httpError('开票记录不可用', 409)
+      if (!invoice || invoice.deletedAt || invoice.storeKey !== r.storeKey) throw httpError('开票记录不可用', 409)
       // An existing done fact remains done; reception does not mutate Invoice.status.
       if (r.receiptConfirmedAt) return { ok: true, alreadyConfirmed: true }
-    } else if (!correction && r.shipmentConfirmedAt) return { ok: true, alreadyConfirmed: true }
-    let data, previous = {}, reason = ''
+    }
+    let data, deliveryMethod, previous = {}, reason = ''
     if (receipt) data = { receiptConfirmedAt: now, receiptConfirmedBy: actor.username }
     else {
       await tx.$queryRawUnsafe('SELECT id FROM "MailingRecord" WHERE id = $1 FOR UPDATE', r.linkedBusinessRecordId)
       const mailing = await tx.mailingRecord.findUnique({ where: { id: r.linkedBusinessRecordId } })
-      if (!mailing || mailing.deletedAt) throw httpError('邮寄记录不可用', 409)
+      if (!mailing || mailing.deletedAt || mailing.storeKey !== r.storeKey) throw httpError('邮寄记录不可用', 409)
+      if (!correction && r.shipmentConfirmedAt) return { ok: true, alreadyConfirmed: true }
+      deliveryMethod = mailing.method
       if (correction && !r.shipmentConfirmedAt) throw httpError('请先确认发货', 409)
       if (correction) {
         reason = String(input.reason || '').trim()
@@ -139,11 +147,16 @@ export async function confirmService(db, { requestId, user, action, input = {}, 
     await tx.storeServiceAudit.create({ data: { id: uid('ssa'), requestId: r.id, actorId: user.id,
       action, reason, detail: { before: previous, after: data }, createdAt: now } })
     if (!correction) {
-      const template = templates[r.type], accepted = r.subscriptionChoice === 'accept' && r.subscriptionTemplateId === template?.id
+      const template = selectServiceTemplate(templates, r, { saved: true,
+        ...(!receipt ? { method: deliveryMethod } : {}) })
+      const accepted = r.subscriptionChoice === 'accept' && r.subscriptionTemplateId === template?.id
+      const platformCode = !template ? (!receipt && deliveryMethod !== r.requestMetadata?.method
+        ? 'DELIVERY_METHOD_CHANGED' : r.subscriptionTemplateId ? 'SUBSCRIPTION_TEMPLATE_MISMATCH' : 'TEMPLATE_NOT_CONFIGURED')
+        : accepted ? null : 'NO_SUBSCRIPTION_PERMISSION'
       await tx.storeServiceDelivery.create({ data: { id: uid('ssd'), requestId: r.id,
         event: receipt ? 'INVOICE_RECEIVED' : 'SHIPMENT_CONFIRMED', version: 1, userId: r.customerUserId,
         appId: r.customerAppId, envId: r.customerEnvId, openId: r.customerOpenId,
-        templateId: template?.id || null,
+        templateId: r.subscriptionTemplateId || null, platformCode,
         status: !template?.id ? 'BLOCKED_CONFIG' : accepted ? 'PENDING' : 'NO_PERMISSION', nextAttemptAt: now } })
     }
     return { ok: true, alreadyConfirmed: false, correction, message: correction ? '详情已更正，未额外发送提醒' : '业务已确认，消息状态请查看发送结果' }
