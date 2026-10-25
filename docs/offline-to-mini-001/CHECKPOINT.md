@@ -1,27 +1,27 @@
-# budu 门店服务当前任务检查点
+# budu 门店服务最终 TEST 检查点
 
-2026-10-26，Asia/Shanghai。**INTEGRATION_BLOCKED**。本页是当前恢复索引，旧阶段证据仍保留原日期/版本。
+2026-10-26，Asia/Shanghai。**INTEGRATION_BLOCKED**。本页是最新恢复索引；此前阶段保留原版本和结果。
 
-OS运行源码`4bdea23503844c4ad743005e90ae83b91b70f6b9`；小程序运行源码`fd26c8fc853b68d05d28478b2ef1142259035f46`。后续任务HEAD仅为脱敏文档，以fetch后git rev-parse取得，不能用旧提交覆盖现有工作区。分支均`codex/offline-to-mini-001`，保留其他任务修改。
+OS实现 `4bdea23503844c4ad743005e90ae83b91b70f6b9`；小程序实现 `fd26c8fc853b68d05d28478b2ef1142259035f46`。本轮无应用源码、依赖或迁移变更；后续任务HEAD为脱敏证据文档提交，以fetch后准确HEAD为准，不用旧版本覆盖工作区。分支均 `codex/offline-to-mini-001`，其他任务改动保留。
 
-已完成三模板适配：邮寄按服务端保存的顺丰/同城方式唯一选择，开票独立一个；请求订阅ID、保存ID、outbox及最终发送ID一致。配置变化不把旧accept转新授权，拒绝/取消/不可用不阻断表单、回执和本人回查。旧邮寄候选不进入新申请选择，未删除或全局替换模板/历史记录。
+| 场景 | 实际订阅 / 提交 | 正常OS确认 | 微信平台 | 设备收件并进入本人详情 |
+| --- | --- | --- | --- | --- |
+| INVOICE | accept / PASS | PASS | PASS_ERRCODE_0 | PASS_DIRECT_HUMAN_REPORT |
+| MAILING_EXPRESS | accept / PASS | PASS | PASS_ERRCODE_0 | PASS_DIRECT_HUMAN_REPORT |
+| MAILING_FLASH | accept / PASS | BLOCKED_MISSING_REAL_PROOF | NOT_RUN | NOT_RUN |
 
-| 场景 | 精确字段映射 |
-| --- | --- |
-| 普通快递 | character_string5→完整trackingNo；thing20→carrier；thing13→固定发货提示；time9→shipmentConfirmedAt北京时间 |
-| 同城闪送 | thing20→carrier；time9→shipmentConfirmedAt；thing13→固定发出/配送凭证提示。仍验证真实deliveryProof，详情展示，不编造运单 |
-| 开票接收 | thing2→关联Invoice.companyName；amount3→关联amountCents整分；time4→原submittedAt；thing5→固定“申请已收到，待财务办理，请留意邮箱” |
+消息映射：普通快递 character_string5=完整真实运单、thing20=实际承运公司、thing13=固定提示、time9=真实确认时间；闪送 thing20/time9/thing13，不含运单字段，真实配送凭证仍必填；开票 thing2=实际关联抬头、amount3=整分金额、time4=原提交时间北京时间、thing5=固定收到申请说明。三模板按服务端保存业务及配送方式唯一选择。拒绝/不可用不阻断保存或本人回查，旧accept不迁成新授权，旧模板不全局替换。
 
-长抬头消息摘要带省略号，完整税务原值/详情保留；未知类型明确拒绝，time独立校验。开票事件INVOICE_RECEIVED，不更新Invoice.status、不发邮件；接收者绑定提交申请顾客，收件人不自动成为通知对象。确认/审计/outbox同事务、幂等，更正不自动再提醒，UNKNOWN/SENDING不盲目重发。同店关联守卫已在详情/确认/发送三处校验。
+开票只确认公司收到申请，发票仍待开具，不发邮件。实际发送验证长抬头20字带省略号、￥1.23及原提交时间跨北京时间日界；完整业务原值保留。普通快递真实完整运单进入请求体，不截断。消息 formal/trial/developer 与二维码 release/trial/develop 分开，正式版映射沿用74项定向检查。
 
-消息formal/trial/developer与二维码release/trial/develop分别校验。74项消息定向、53项真实一次性PG/跨仓合同/员工权限、MP页面17+工具16通过；原失败与修复保留，不混为全仓回归。OS构建、新142文件TEST打包和官方列表预览通过；不是设备验收。独立源码复核PASS。实际账号三模板ID、标题和字段由微信只读接口核验匹配，实际ID仅在受控配置位置。
+当前两设备本人列表、收到状态、返回重入、商城图片人工通过。iPhone开票与邮寄原生键盘/常规填写/底部勾选提交人工通过；iPad状态：PASS_MANUAL_INVOICE_AND_MAILING_NATIVE_KEYBOARD_NORMAL_FIXTURE_SUBMIT_REENTRY。服务端实际邮寄地址14/17字、备注为空，iPad开票备注也为空，本轮长文本物理压力NOT RUN。旧190字地址/140字备注实机SDK渲染及滚动证据，与当前完全相同的WXML/WXSS/validator可作有限回归复用，不能冒充本轮长文本手指操作。拒绝订阅：NOT_RUN_NATIVE_REJECTION_SELECTION_NOT_PRESENT_OR_PROMPT_NOT_SHOWN，实际仍记录accept，未发送该额外开票通知。物理双击与强制过期重登本轮未新测；既有SDK证据、当前真实本地PG幂等/权限测试分列，不冒充本轮物理操作。
 
-实际TEST后端`4bdea23503844c4ad743005e90ae83b91b70f6b9`。PASS：实际TEST新代码/三模板解析、应用DB、91账本和业务摘要前后匹配；SEND0。本轮没有远端业务数据写入或消息发送，旧通知未重排。具体私有运行/恢复对象留原受控receipt。
+本轮复用无源码变化的74消息、53真实本地PG/合同/员工权限、33小程序定向测试；新增10项真实一次性本地PG单次通知隔离测试通过。独立复核固定TEST容器/数据库/源码、可信自有账号身份、精确本轮申请和实际sender/restricted fetch。全局SEND始终0，单次发送仅处理当前申请，4条历史BLOCKED_CONFIG、已受理任务及UNKNOWN/SENDING均未重排。平台受理与人工设备收件分列。
 
-剩余阻断：用户已授权并报告origin设置更新，同一Chrome原TEST员工页仍被saved permission/managed policy拒绝；未绕过。新场景实际订阅→提交→OS确认→微信send受理→设备出现→本人详情均未完成，SEND0。需要实际放行工具origin权限及自有真实配送资料和指定自有账号设备；无需再提供模板。
+员工Browser Use最后一次仍被saved permission/managed policy拒绝，未换端口、来源或员工API绕过。人工通过正常Chrome完成创建和确认，并由服务器证据核对。iPad历史超时位于截图成功后的IDE身份RPC匹配响应等待层；底层断连原因未定，人工业务通过不代表自动化已修复，没有增加超时或重复无变化扫码。
 
-iPad旧失败已定位到截图成功后的IDE automator/device身份RPC响应等待，默认10000ms；具体底层断连原因未定，无加时/重复扫码。新构建原生键盘/遮挡/长字段物理滚动/关闭弹窗/返回重入未运行。历史b93真实跨端和4e定点UI证据不改写为当前完整PASS；CloudBase旧故障日志主题缺失不推出零调用。
+仅本地PRODUCTION前端包142文件通过，未连接正式编译/预览/上传。只读生产a86e150/90迁移/唯一Writer正常，候选仅增20261024120000_offline_store_services；没有正式迁移/备份或部署。正式容量、fresh备份/隔离恢复及本任务90→91精确SHA发布合同仍须完成并受最终授权约束。没有合并主分支、门店入口切换、提审或发布。
 
-机器可读摘要见[acceptance-2026-10-26.json](acceptance-2026-10-26.json)。私有报告、模板ID/配置、身份、预览凭证和原始日志不入Git；不能从远端源码恢复易失RAM或未同步的私有材料。先fetch核对分支、状态、最新检查点和受控候选清单，不重启旧控制器或重发旧任务。
+本轮仍缺真实闪送配送凭证及实际服务方，不能确认发出或发送通知；真实拒绝订阅、当前物理长文本压力也未完成。闪送可继续从既有TEST申请办理；因已提交资料不可改写，补长文本/拒绝验收需要新的隔离TEST申请和物理操作，不改已保存事实。无需重新建立模板或重做已通过功能。私密配置、模板ID、稳定身份、业务资料、运单、预览凭证和原始日志留原受控位置，不入Git。详情见机器可读脱敏摘要；远端Git不包含本机私有材料或RAM状态。
 
-生产合并/迁移/部署/门店正式入口切换/提审/发布未执行，正式容量准入NOT_EVALUATED；发布顺序、fresh备份/恢复及最终批准范围仍按原边界处理。必要真实验收未完成前，总状态保持INTEGRATION_BLOCKED。
+[脱敏验收摘要](acceptance-final-test-2026-10-26.json)。

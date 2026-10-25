@@ -1,0 +1,111 @@
+{
+  "task": "BUDU-OFFLINE-TO-MINI-001",
+  "date": "2026-10-26",
+  "updatedAtUtc": "2026-10-25T17:59:11.192132+00:00",
+  "status": "INTEGRATION_BLOCKED",
+  "sourceImplementationCommits": {
+    "os": "4bdea23503844c4ad743005e90ae83b91b70f6b9",
+    "miniprogram": "fd26c8fc853b68d05d28478b2ef1142259035f46"
+  },
+  "sourceCheckoutHeadsBeforeEvidenceCommit": {
+    "os": "26fd40ddb70cfc72326bbef3db93cd20b8ac2129",
+    "miniprogram": "18c4e1b5a377c94f9b341e442f8cb7c02b095754"
+  },
+  "taskBranch": "codex/offline-to-mini-001",
+  "templateAccountMetadata": "PASS_EXACT_IDS_TITLES_FIELDS_READ_ONLY",
+  "templateIdsOrIdentityIncluded": false,
+  "scenarios": {
+    "INVOICE": {
+      "actualSubscription": "accept",
+      "submitted": "PASS",
+      "requestedSavedSelectedIdsConsistent": true,
+      "normalOsConfirmation": "PASS",
+      "platform": "PASS_ERRCODE_0",
+      "deviceReceivedAndCorrectDetail": "PASS_DIRECT_HUMAN_REPORT",
+      "actualMessageAttempts": 1
+    },
+    "MAILING_EXPRESS": {
+      "actualSubscription": "accept",
+      "submitted": "PASS",
+      "requestedSavedSelectedIdsConsistent": true,
+      "normalOsConfirmation": "PASS",
+      "platform": "PASS_ERRCODE_0",
+      "deviceReceivedAndCorrectDetail": "PASS_DIRECT_HUMAN_REPORT",
+      "actualMessageAttempts": 1
+    },
+    "MAILING_FLASH": {
+      "actualSubscription": "accept",
+      "submitted": "PASS",
+      "requestedSavedSelectedIdsConsistent": true,
+      "normalOsConfirmation": "BLOCKED_MISSING_REAL_PROOF",
+      "platform": "NOT_RUN",
+      "deviceReceivedAndCorrectDetail": "NOT_RUN",
+      "actualMessageAttempts": 0
+    }
+  },
+  "deviceAcceptance": {
+    "iphone": "PASS_MANUAL_INVOICE_AND_MAILING_NATIVE_KEYBOARD_NORMAL_FIXTURE_SUBMIT_REENTRY",
+    "ipad": "PASS_MANUAL_INVOICE_AND_MAILING_NATIVE_KEYBOARD_NORMAL_FIXTURE_SUBMIT_REENTRY",
+    "currentPhysicalLongFieldStress": "NOT_RUN_SHORT_ADDRESSES_AND_EMPTY_REMARKS_DO_NOT_ESTABLISH_STRESS",
+    "historicalLongFieldRendering": "PASS_REAL_DEVICE_SDK_OLD_CANDIDATE_UNCHANGED_WXML_WXSS_VALIDATOR_LIMITED_REUSE",
+    "bothOwnedListReceivedInvoiceReentryMall": "PASS_DIRECT_HUMAN_REPORT",
+    "subscriptionRejection": "NOT_RUN_NATIVE_REJECTION_SELECTION_NOT_PRESENT_OR_PROMPT_NOT_SHOWN",
+    "versions": "User confirmed unchanged from previously read device versions; no new SDK read",
+    "messageEntryBuild": "NOT_INDEPENDENTLY_READ_FROM_DEVICE",
+    "ideChannel": "Historical IDE matching-response timeout after screenshot; exact transport root cause unresolved; manual results separate",
+    "physicalRepeatedTapThisRound": "NOT_RUN_PRIOR_SDK_AND_CURRENT_REAL_PG_EVIDENCE_SEPARATE",
+    "expiredSessionOnPhysicalDeviceThisRound": "NOT_RUN_PRIOR_AUTH_TESTS_SEPARATE"
+  },
+  "tests": {
+    "priorMessageFieldsVersions": 74,
+    "priorRealLocalPgContractStaff": 53,
+    "priorMiniprogramTargeted": 33,
+    "newDisposableLocalPgSingleSendIsolation": 10,
+    "applicationSourceChangedThisRound": false,
+    "reuseReason": "Exact implementation/source hashes unchanged; reran only necessary new scoped-send tool checks"
+  },
+  "browserAutomation": "LAST_ATTEMPT_BLOCKED_SAVED_PERMISSION_OR_MANAGED_POLICY_NO_BYPASS",
+  "actualManualEmployeeProductFlow": "PASS_CREATED_AND_CONFIRMED_INVOICE_AND_EXPRESS_NORMAL_UI",
+  "sendEnabled": false,
+  "scopedSendsOnly": true,
+  "actualMessageSends": 2,
+  "historicalQueue": "Four BLOCKED_CONFIG attempts0 unchanged; accepted tasks never reset or resent",
+  "productionMutation": false,
+  "productionCapacityAdmission": "NOT_EVALUATED_EXACT_RELEASE_PEAK_NOT_BOUND",
+  "productionMigrationDiff": {
+    "productionCount": 90,
+    "candidateCount": 91,
+    "existingChecksumsMatch": true,
+    "pending": [
+      "20261024120000_offline_store_services"
+    ],
+    "applied": false
+  },
+  "remaining": [
+    "Real flash proof and actual carrier needed before normal OS dispatch confirmation, platform send, device receipt and owned-detail proof",
+    "Actual native rejected-subscription submission/recall and current physical long-address/remark stress remain NOT RUN; prior source/SDK evidence is separate",
+    "Bind final exact-SHA release contract, capacity budget, fresh backup and isolated recovery before requesting concrete production authorization"
+  ],
+  "sourceReview": "PASS_PREVIOUS_IMPLEMENTATION_REVIEW_EXACT_SOURCES_PRESERVED",
+  "finalEvidenceReview": "PASS_SCOPED_SOURCE_AND_EVIDENCE_WITH_ACCURATE_BLOCKERS",
+  "completeThreeScenarioIntegration": false,
+  "candidateReady": false,
+  "privateEvidenceDigests": {
+    "invoice-send-execution.json": "1c3f832f5adeb973013e9392ea77f704f4011b3a6c485003d6dc5167ad48a286",
+    "invoice-device-delivery.json": "2545b6b4524cbc174683d446c997c766cd8c2dbfe1acc04e470d3e4972282555",
+    "express-send-execution.json": "c87555e66851fb90c11e1d7012de1db968d6cdbd3a385f4b3c520b4cc0899394",
+    "express-device-delivery.json": "540b89264218caf5dcf64d9e176da0750bbe25e9d3c34a7ee4a3ea2fcb566580",
+    "invoice-manual-form-and-confirmation.json": "2710a0f09329a2e9b58399c6890136ee32c21ba35d1a5dd19e8c59957fdc9598",
+    "express-ipad-manual-form.json": "ef6f1b38eea888041006924d9199cf659c4d1495a3d8dd19bae14a928862e045",
+    "flash-iphone-manual-form.json": "e708697b90ec077ab7862249b41343a8dbc7e1b5c1aeb0bb534e55a531847c37",
+    "invoice-ipad-manual-form.json": "a01a7f74348765dd29b4b02ad7ee85533034fc56ea5a826340eb1bd822da715c",
+    "runtime-final-case-details.json": "4456074b459cc610930f638f3e99fcefcf69b7ef31de9bed8eb9d9b11fdfc6ee",
+    "scoped-sender-local-pg.json": "37f6a76a0009165de2d12bd286166ac307cd4c7c781df799d5ae932967377ce4",
+    "scoped-sender-execution-review.invoice-used.json": "848d8858cda08f7b21252eaf8e32a865585e560d8cbdd74d38da525f650ede96",
+    "final-candidate-review.json": "96030f1a6bf745bb3bc4a928d4e65f0c9592b1fed062ad94e92a9adcc3e9f5a6",
+    "scoped-sender-execution-review.json": "9c27ce30484dd7167777e4d5dab1b56b2fbea043ba5cce30d3bccb4e75192243",
+    "production-readonly.json": "ff5dae7c1e91f2a7f0c12dce1997250da907fb2c340c7899270f19d4c69658a1",
+    "production-candidate-diff.json": "bf53b266cccc9f3afc191831f8a772e2beef7b6aa6cdaa19a0df9d7899dfaeb0",
+    "production-frontend-build.json": "3d62442022f7e3b36f05c26fe94c55c8e52489ae29cc49e9bc572c1715f2a90d"
+  }
+}
