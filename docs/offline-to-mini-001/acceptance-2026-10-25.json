@@ -1,0 +1,106 @@
+{
+  "task": "BUDU-OFFLINE-TO-MINI-001",
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "status": "INTEGRATION_BLOCKED",
+  "implementationCommits": {
+    "os": "896f03d697e7363b3caec4f8f735158484e0d899",
+    "miniprogram": "4e10963cec70a31db0477c18e3d100183e266257"
+  },
+  "runtimeOsAtLastRead": "425aad2f21f859e3c74ac077898954c11246343c",
+  "taskBranch": "codex/offline-to-mini-001",
+  "results": [
+    {
+      "item": "subscription message default, allowed values, production runtime mapping and final request body",
+      "status": "PASS",
+      "scope": "LOCAL_SYNTHETIC_PROVIDER_REQUEST",
+      "tests": 17
+    },
+    {
+      "item": "QR env_version release/develop and release-path gate",
+      "status": "PASS",
+      "scope": "LOCAL_SYNTHETIC_PROVIDER_REQUEST"
+    },
+    {
+      "item": "proof-only same-city delivery and requester-only ownership",
+      "status": "PASS",
+      "scope": "LOCAL_DISPOSABLE_REAL_POSTGRESQL_SYNTHETIC_DATA"
+    },
+    {
+      "item": "related PostgreSQL review",
+      "status": "PASS",
+      "tests": 23
+    },
+    {
+      "item": "related cross-repository contract",
+      "status": "PASS",
+      "tests": 15
+    },
+    {
+      "item": "OS production build",
+      "status": "PASS",
+      "deploymentPerformed": false
+    },
+    {
+      "item": "iPad timeout layer localization",
+      "status": "PASS",
+      "scope": "HISTORICAL_TRACE_PLUS_INSTALLED_VENDOR_SOURCE",
+      "layer": "DEVTOOLS_AUTOMATOR_DEVICE_RPC",
+      "exactDisconnectCause": "UNVERIFIED"
+    },
+    {
+      "item": "iPad channel stability",
+      "status": "BLOCKED"
+    },
+    {
+      "item": "actual adopted templates and keyword mapping",
+      "status": "BLOCKED"
+    },
+    {
+      "item": "TEST staff browser access",
+      "status": "BLOCKED",
+      "reason": "USER_DECLINED_ORIGIN_APPROVAL"
+    },
+    {
+      "item": "this round iPhone/iPad physical keyboard and core form acceptance",
+      "status": "NOT RUN"
+    },
+    {
+      "item": "real subscription accept/refuse, platform acceptance, actual device receipt and message deep link",
+      "status": "BLOCKED"
+    }
+  ],
+  "historicalEvidenceVersions": {
+    "crossEndpointNativeFormOperations": "b93ea5ab050c7c04e6c01e74d4b8cd8a678dffb5",
+    "confirmationUiFixDevices": "4e10963cec70a31db0477c18e3d100183e266257",
+    "completeDeviceAcceptance": false,
+    "completeIntegrationPass": false
+  },
+  "historicalFailurePreserved": {
+    "initialVersionRegression": {
+      "tests": 16,
+      "pass": 10,
+      "failIncludingParentTests": 6
+    },
+    "initialNewDatabaseFixtureInterference": "ONE_PENDING_SYNTHETIC_EVENT_LEFT_FOR_NEXT_GLOBAL_WORKER_TEST; FIXTURE_NOW_CONSUMES_OWN_SYNTHETIC_EVENT",
+    "afterFixtureFix": {
+      "tests": 23,
+      "pass": 23
+    }
+  },
+  "privateEvidenceDigests": {
+    "message-versions-after-fix.tap": "aa2f760925b20022959a91ae242e8cec0e743962fca5d8f56ef4e62d7ad3b223",
+    "test-offline-service-contract.mjs.tap": "d3d885e29d6afb9ff77efa2f1fd55609a167b9a91d476b868a28dabe302cf42b",
+    "test-offline-service-review-after-fixture-fix.tap": "363061b19ec7d55ff1fd99e9c04a0c9a70045b5edae9d021f22fd08ca664232d",
+    "os-production-build.log": "fc7c7ac46ba0855ecb0677de7fb111f60679cf3faaca222356fbcf3c40296572",
+    "ipad-timeout-layer-analysis.json": "47cb7a7f593eea3de3da27d167f9ba3ad6a824307564d0bee6b5c86379e013d9",
+    "test-template-config.json": "b377fd5d6317ec56f6be140c4c1ec45bb7421e8fc502b89cfcfb8961f52acc87",
+    "source-review.md": "2330cd6654fc4627d16f21a15c8dcb85b13d0d522958a1cf3ebdeb54412cd1b9"
+  },
+  "privacy": "No secrets, account identities, raw private configuration, preview credentials or customer data included",
+  "productionMutation": false,
+  "thisRoundMessageSends": 0,
+  "temporaryPgClustersStopped": true,
+  "thisRoundRemoteTestBusinessWrites": false,
+  "localDisposableSyntheticWrites": true
+}

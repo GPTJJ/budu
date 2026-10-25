@@ -1,20 +1,45 @@
-# budu 门店服务小程序候选检查点
+# budu 门店服务小程序任务检查点
 
-任务 BUDU-OFFLINE-TO-MINI-001；2026-10-24 北京时间。状态：INTEGRATION_BLOCKED；本地代码/验证/独立复核完成，未上线。
+任务 BUDU-OFFLINE-TO-MINI-001；2026-10-25，北京时间。状态 **INTEGRATION_BLOCKED**。本文件替换初始检查点中的当前状态；历史事实仍由 Git 保留。
 
-- 完整本轮授权来源：用户粘贴指令；开发、隔离迁移/恢复、测试、私有候选已授权；生产迁移、入口切换、提审发布未授权。
-- 原 OS: 用户原OS工作区，recovery-20261008，29ed604，已有不属本任务的 PosOffer 修改，未改动。
-- 隔离 OS: 本任务持久worktree，codex/offline-to-mini-001，基线 origin/codex/purchase-return-supplier-select a86e150；准确位置见私有candidate-manifest.json。
-- 原 MP: 用户原小程序工作区，main 6231207，干净。
-- 隔离 MP: 与OS同级的本任务持久worktree，同名任务分支，基线 origin/codex/store-pickup-001-release ce85937。
-- 本机新建 PostgreSQL，仅 loopback 55436，数据目录 /private/tmp/budu-offline-to-mini-001/pgdata。仅合成资料；测试 helper 每次创建/销毁自己命名的 disposable database；不使用现有数据卷。
-- 原二维码两小时一次性；同一 token 行锁协调 H5/小程序竞争。小程序 scene HMAC 派生128位引用，仅hash入库，重试生成不失效；成功事务绑定可信session+context身份，原H5/历史数据不按电话认领。
-- 已添加增量 migration 20261024120000_offline_store_services；原90→91，仅新增字段/表/索引。
-- 后端源码 server/store-service-{core,api,notifications,conversion}.js；扩展 customer-requests / app / index / v2。
-- MP原生服务页、orders桥及OS页面由独立作者实现；独立测试/审查者不主写业务代码。
-- 用户指定本项目自有测试账号（昵称仅本地记录）；尚无该账号本项目真实订阅/触达凭据，不能凭昵称猜测openid。
-- 初期生产只读访问因授权不足被拒绝，未绕过；后续用户明确补充只读授权，生产完整SHA与a86e150基线、90条迁移账本、唯一Writer及实际应用DB均已核验。容量仅完成现状测量，不代表本次发布容量PASS；私有收据记录完整事实。
-- 平台工具：无CloudBase connector；微信开发工具登录成功，最终隔离开发包官方预览编译通过（主包1754681B、服务分包24645B）；模拟器launch failed；匹配的开票接收/线下发货模板未核验，未真实发送。
-- 回归结果：独立PG/HTTP首轮22/22，最终跨仓HTTP/前缀转换/runtime挂载/消息分类/统计15/15；MP既有199/199；OS新build成功及既有新UI32例已过；员工权限9/9；90→91迁移及14表备份恢复通过。生产桥/旧登录相关26项通过，另1项基线甜意卡展示断言冲突保留失败记录，未改业务或删测。
-- TEST路径修复：既有Nginx把公网test-sc11a前缀替为/api；仅OS TEST挂载改为内部路径，六条精确Map重建公网验签路径，保留生产、身份、时间窗、nonce及HMAC保护。新测试先在旧代码复现失败，修复后通过；Nginx、小程序、生产配置未变。
-- 剩余：远端TEST仍缺本任务模块/签名配置/运行开关，CloudBase配置与部署模块未核验；实际模板待用户提供，真实订阅/微信触达及设备验收未完成。生产迁移/部署/提审发布未执行，不能把本地候选通过称为远端联通。准确本地提交/产物清单见交付目录candidate-manifest.json。
+## 版本与恢复
+
+- 仓库 GPTJJ/budu，分支 `codex/offline-to-mini-001`；本次实现提交 `896f03d697e7363b3caec4f8f735158484e0d899`，父基准425aad2f21f859e3c74ac077898954c11246343c。本检查点是后续文档提交，准确文档HEAD用fetch后的 `git rev-parse HEAD` 取得。
+- 配套小程序运行代码 `4e10963cec70a31db0477c18e3d100183e266257`；原b93跨端设备证据与4e定点UI证据分别保留。本轮小程序仅同步交接文档，未改运行源码或重新生成预览。
+- 先fetch核对同名远端引用与本地状态；保留其他任务改动，不reset/stash/clean，不用旧快照覆盖别人新提交。
+- Git可恢复代码和本脱敏摘要。私密配置、测试身份、原始收据和预览凭证仍在原受控交付目录，未入库；另一台设备不能从Git恢复这些材料、本机未提交文件或易失RAM。不要从历史扫码回复重启控制器。
+
+## 本次修复与验证
+
+| 项目 | 状态 | 结果/步骤 |
+| --- | --- | --- |
+| 订阅消息正式版参数 | PASS | sender默认及允许值改formal；实际runtime production→formal，TEST→developer；最终provider请求体完整断言 |
+| 二维码参数 | PASS | 单独保留env_version=release/develop，正式路径未就绪仍拒绝；未批量替换release |
+| 定向请求体/字段测试 | PASS | node --test scripts/test-store-service-message-versions.mjs，17/17；合成fetch，不是真实平台消息 |
+| 实际隔离PG | PASS | test-offline-service-review.mjs 23/23、test-offline-service-contract.mjs 15/15；新建loopback专用集群，各自销毁disposable数据库并停止集群 |
+| 闪送仅凭证 | PASS | 真实隔离PG允许trackingNo=null、凭证单独回显；不编造单号、不把配送说明塞入运单字段。兼容字段模板可构建消息；必填单号模板缺值则发送前拒绝 |
+| 构建与源码检查 | PASS | npm run build、git diff --check；只修2个发送版本选择点及相关测试，没有迁移或权限/路径放宽 |
+| 独立源码审查 | PASS | 源码、最终body断言、实际PG日志和本轮失败边界已只读复核；只认可已证范围 |
+
+官方参数对照：[订阅消息](https://docs.cloudbase.net/en/recipes/add-subscribe-message-cloud-function)使用formal/trial/developer，[小程序码](https://docs.cloudbase.net/recipes/add-share-with-params-miniprogram)使用release/trial/develop。微信原API页工具直读失败保留；这些规则不证明本账号模板或权限可用。
+
+17项定向集合是在初次16项复现之后补入闪送测试的最终集合。初次PG新增夹具留下PENDING事件，干扰后续全局worker计数，已让夹具通过合成provider消费自己的事件；只重跑受影响的23项，15项合同未重跑。初次失败保留，不冒充真实消息发送。
+
+## 远端与设备证据边界
+
+此前真实TEST已完成原142文件iPad邮寄/iPhone开票的长表单、SDK原控件勾选/双击、保存、OS确认、回查和商城；并非本机HTTP替代。最终4e修复了勾选后旧提示残留；两设备状态/前后图有证据，iPhone定点5步通过，iPad最后截图后的身份回读超时，不能写整套通过。设备为历史实读iPhone 15 Pro Max/iOS27.2、iPad mini6 Wi-Fi/iOS26.6.2，微信8.0.79/基础库3.17.5；本轮没有新的物理设备验收。
+
+本轮定位：失败调用为App.callWxMethod设备身份回读，截图已返回；SDK不构造此timeout，安装IDE的automator bridge等待匹配响应默认10000ms，随后remote connection_lost路径拒绝待回调。该失败操作没有调用CloudBase/OS；没有全链路抓包，两个身份原生方法中究竟哪一个未返回未留存。底层断连原因和稳定性仍BLOCKED，没有增加超时、重试或改业务代码掩盖。
+
+TEST配置只读新查：两类模板均未配置，SEND=0；它不证明微信账号没有模板。账号实际templateId/标题/类目/场景/完整关键词类型与限制仍BLOCKED。模板站点先前安全限制记录保留。本次TEST员工页面被Browser Use origin approval明确拒绝；没有换浏览器、CDP、HTTP员工动作等绕过。OS确认后微信实际收件和本人深链、真实同意/拒绝、原生键盘/遮挡/物理滚动、原码直达等仍BLOCKED或NOT RUN。
+
+实际TEST运行时仍为425aad2，91迁移（旧业务收据时间明确保留）；新896参数修复未部署。开票只表示公司收到申请，Invoice仍由财务办理，以顾客邮箱实际收到为准。收件人手机号不自动成为通知对象。所有本轮测试为合成资料，没有向真实顾客外联。
+
+## 下一步与边界
+
+1. 账号持有人：微信公众平台→小程序→订阅消息→我的模板→详情，提供两类完整ID、标题、一次性/长期类型、类目/场景、全部中文标签及typeN.DATA、格式/长度/审核枚举；公共模板tid/示例不能代替。
+2. 恢复工具访问既有TEST员工页面的必要权限；这是本次工具安全拒绝，现有任务授权不能替代该origin授权。不走替代路线。
+3. 准备有效TEST入口，使用用户指定自有账号，人工补两设备原生键盘/表单/返回状态；模板核对后按“扫码→订阅选择→提交→OS确认→平台受理→设备实际收件→本人正确详情”逐项记证。平台受理不代替实际收件，拒绝不阻断提交/回查。旧BLOCKED/SENDING/UNKNOWN不自动重排。
+4. 所有必要验收通过才修改总状态。生产合并/迁移/部署/门店入口切换/提审发布均未执行，仍需既有具体批准。容量/恢复与新基线须正式发布前再核验。
+
+机器可读脱敏证据摘要见 [acceptance-2026-10-25.json](acceptance-2026-10-25.json)，包含本轮私有证据摘要和精确实现提交。私有报告、具体发布/容量/恢复对象与原始证据仍留原位置，未当作生产现状或通过证明。
