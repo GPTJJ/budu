@@ -103,7 +103,7 @@ class MigrationSqlTests(unittest.TestCase):
 
     def test_sql_pins_the_old_ledger(self):
         sql = contract.migration_sql({'release': 'a' * 40, 'oldLedger': {'m1': 'c' * 64}, 'sql': ''})
-        self.assertIn("'m1'", sql)
+        self.assertIn('"m1"', sql)
         self.assertIn('c' * 64, sql)
 
 
