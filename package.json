@@ -25,6 +25,7 @@
     "test:home:browser": "playwright test tests/home-workspace.spec.mjs",
     "test:pos-daily": "node --test scripts/test-pos-daily.mjs",
     "test:product-excel": "node --test scripts/test-product-excel.mjs",
+    "test:online-catalog": "node --test scripts/test-online-catalog-admin.mjs",
     "test:employee-excel": "node --test scripts/test-employee-pay-excel.mjs",
     "test:daily-pay-adjustment": "node --test scripts/test-daily-pay-adjustment.mjs",
     "test:permissions": "node --test scripts/test-account-permissions.mjs",
@@ -72,6 +73,7 @@
     "test:report-center:final": "npm run test:report-center:rc2a && npm run test:report-center:rc2b && npm run test:report-center:rc2c && npm run test:report-center:rc3 && npm run test:report-center:rc5 && npm run test:report-center:rc6a && npm run test:report-center:rc6b"
   },
   "dependencies": {
+    "@cloudbase/node-sdk": "^3.18.7",
     "@prisma/client": "^6.19.3",
     "@sentry/node": "^10.70.0",
     "@sentry/react": "^10.70.0",

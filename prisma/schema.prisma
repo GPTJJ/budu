@@ -363,6 +363,7 @@ model InventoryItem {
   productGroup             ProductGroup?              @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
   sweetCardAllocations     SweetCardRedemptionItem[]
   onlinePolicies           OnlineProductPolicy[]
+  onlineProfile            OnlineProductProfile?
   partnerReplenishmentEnabled Boolean                    @default(false)
   partnerOrderUnit            String?
   partnerKgBasePriceCents     BigInt?
@@ -2444,6 +2445,49 @@ model OnlineProductPolicy {
   product           InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
   @@unique([namespace, externalProductId, externalSkuId])
   @@map("online_product_policies")
+}
+
+model OnlineCategory {
+  id        String                 @id
+  name      String                 @unique
+  sortOrder Int                    @default(0) @map("sort_order")
+  isActive  Boolean                @default(true) @map("is_active")
+  meta      Json                   @default("{}")
+  version   Int                    @default(1)
+  createdAt DateTime               @default(now()) @map("created_at")
+  updatedAt DateTime               @default(now()) @updatedAt @map("updated_at")
+  products  OnlineProductProfile[]
+  @@index([isActive, sortOrder])
+  @@map("online_categories")
+}
+
+model OnlineProductProfile {
+  id               String          @id
+  inventoryItemId  String          @unique @map("inventory_item_id")
+  mpId             String          @unique @map("mp_id")
+  onlineCategoryId String?         @map("online_category_id")
+  title            String          @default("")
+  subtitle         String          @default("")
+  spec             String          @default("")
+  unit             String          @default("")
+  priceCents       BigInt?         @map("price_cents")
+  shelfLife        String          @default("") @map("shelf_life")
+  storage          String          @default("")
+  media            Json            @default("{}")
+  sortOrder        Int             @default(0) @map("sort_order")
+  status           String          @default("DRAFT")
+  publishState     String          @default("UNPUBLISHED") @map("publish_state")
+  publishedVersion Int             @default(0) @map("published_version")
+  publishedAt      DateTime?       @map("published_at")
+  lastError        String          @default("") @map("last_error")
+  version          Int             @default(1)
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @default(now()) @updatedAt @map("updated_at")
+  inventoryItem    InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  category         OnlineCategory? @relation(fields: [onlineCategoryId], references: [id], onDelete: Restrict)
+  @@index([status, sortOrder])
+  @@index([onlineCategoryId, sortOrder])
+  @@map("online_product_profiles")
 }
 
 model OnlineCheckoutQuote {

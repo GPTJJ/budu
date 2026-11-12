@@ -15,6 +15,7 @@ import { developerSafeDeleteRouter } from './developer-safe-delete.js'
 import { orderPurposeRouter } from './order-purpose.js'
 import { payrollAuditAdminRouter } from './payroll-audit-admin.js'
 import { productsRouter } from './products.js'
+import { onlineCatalogRouter } from './online-catalog.js'
 import { posRouter } from './pos.js'
 import { scheduleRouter } from './schedule.js'
 import { payrollNoticeRouter } from './payroll-notice.js'
@@ -726,6 +727,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
     const pathname = req.path || ''
     const rule =
       (/^\/products(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
+      (/^\/online-catalog(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
       (/^\/product-groups(?:\/|$)/.test(pathname) && [MODULE_KEYS.PRODUCT_CENTER]) ||
       (/^\/pos\/(?:config|orders|products|payments)(?:\/|$)/.test(pathname) && [MODULE_KEYS.STORE_POS]) ||
       (/^\/sweet-cards(?:\/|$)/.test(pathname) && [MODULE_KEYS.SWEET_CARD]) ||
@@ -761,7 +763,7 @@ export function createApp({ onlineCheckoutRuntime = null, partnerDomainMirrorUse
   app.use('/api/v2', requireBusiness, payrollAuditAdminRouter)
   app.use('/api/v2', sweetCardAvailabilityRouter)
   app.use('/api/v2', sweetCardRouter)
-  app.use('/api/v2', requireBusiness, storeClosureRouter, storeManagementRouter, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, purchaseReceiptRouter, v2Router)
+  app.use('/api/v2', requireBusiness, storeClosureRouter, storeManagementRouter, createPartnerDomainRouter({ ...(partnerDomainMirrorUsers ? { mirrorUsers: partnerDomainMirrorUsers } : {}) }), reportCenterRouter, developerSafeDeleteRouter, payrollNoticeRouter, productsRouter, onlineCatalogRouter, scheduleRouter, dailyCorrectionRouter, dailyEntryUpgradeRouter, employeeProfileRouter, assetCenterRouter, approvalRouter, notificationRouter, customerRequestRouter, wechatBindRouter, purchaseReceiptRouter, v2Router)
 
   // ---------- 注册（第一个用户自动成为管理员） ----------
   app.post('/api/auth/register', async (req, res) => {
