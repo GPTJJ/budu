@@ -4,7 +4,34 @@
 > 生产基线：`e91561238b86`（`/api/health` 实测，V2.20）
 > 环境：只有北京生产（`154.8.195.42` / `/opt/budu`），**没有测试环境**
 
-## 0. 发布前必须就位
+## 0. 发布通道约束（2026-11-12 实测）
+
+`Deploy to Beijing Prod` 的 post-transfer 画像**明确禁止任何 Prisma 变更**：
+
+```
+{"result": "RELEASE_ABORTED", "code": "SCHEMA_CHANGED"}
+```
+
+判定位置：`scripts/deploy-prod-transfer-cas.py:1159`，即
+`git diff EXPECTED_OLD_SHA..release -- prisma` 必须为空。该次运行在 identity 阶段即中止，
+**未 checkout、未构建、未替换生产容器、未迁移**（run `43202483127`）。
+
+只有下列带专用合约的发布才允许改 schema，且每条都钉死分支名、SHA、SQL 哈希与文件白名单：
+
+- `deploy-prod-store-pickup.py`（`store_pickup_enabled`）
+- `deploy-prod-purchase-return.py`
+- 采购/物料/物流/移动端热修各自的 `validate_*_identity`
+
+本功能需要新增一套同等级别的迁移发布合约，或在既有合约里显式扩展；**不能**通过普通
+`Deploy to Beijing Prod` 发出去。合约至少包含：
+
+1. 精确的 base / business SHA 与分支名；
+2. `prisma/migrations` 全量 ledger 哈希，且只允许多出本迁移；
+3. 新迁移 SQL 的 sha256 钉死；
+4. 一份 live proof（资源/运行时/ledger 快照）；
+5. 独立测试脚本，接入发布前测试链。
+
+## 0.1 发布前必须就位
 
 - [ ] CloudBase 凭据已配置到生产 OS 容器：`TCB_ENV_ID` / `TCB_SECRET_ID` / `TCB_SECRET_KEY`
 - [ ] 生产库备份完成（见 §1）
