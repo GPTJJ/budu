@@ -70,9 +70,10 @@ jobs:
           docker buildx build --platform linux/amd64 \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --tag "budu-api:post-transfer-${GITHUB_SHA:0:12}" \
-            --provenance=false --sbom=false \
-            --output "type=docker,compression=gzip,compression-level=9,force-compression=true,dest=$RUNNER_TEMP/artifact/image.tar" \
+            --provenance=false --sbom=false --load \
             "$RUNNER_TEMP/source"
+          docker save -o "$RUNNER_TEMP/artifact/image.tar" "budu-api:post-transfer-${GITHUB_SHA:0:12}"
+          tar -xOf "$RUNNER_TEMP/artifact/image.tar" manifest.json
           sha256sum "$RUNNER_TEMP/artifact/image.tar"
 
       - name: Inspect archive under the contract
