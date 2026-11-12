@@ -18,6 +18,13 @@ on:
         required: false
         default: true
         type: boolean
+  # Branch-local validation: builds the archive and runs the read-only preflight.
+  # Production deploy still requires a manual workflow_dispatch with
+  # preflight_only=false. GitHub only dispatches workflows that exist on the
+  # default branch, so this trigger is how the contract is exercised first.
+  push:
+    branches:
+      - codex/online-catalog-admin-002
 
 concurrency:
   group: deploy-bj-online-catalog
@@ -31,8 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
-      EXPECTED_PRODUCTION_SHA: ${{ inputs.expected_production_sha }}
-      AUTHORIZE_RELEASE_SHA: ${{ inputs.authorize_release_sha }}
+      EXPECTED_PRODUCTION_SHA: ${{ inputs.expected_production_sha || 'e91561238b866284bb6621a57fc02926fba01ec8' }}
+      AUTHORIZE_RELEASE_SHA: ${{ inputs.authorize_release_sha || github.sha }}
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@v4
@@ -95,7 +102,7 @@ jobs:
             --archive "$RUNNER_TEMP/artifact/image.tar" --ssh-key ~/.ssh/id_ed25519
 
       - name: Blue-green deploy with atomic migration
-        if: ${{ inputs.preflight_only == false }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.preflight_only == false }}
         env:
           TRANSFER_CAS_KNOWN_HOSTS: ${{ runner.temp }}/known_hosts
         run: |
