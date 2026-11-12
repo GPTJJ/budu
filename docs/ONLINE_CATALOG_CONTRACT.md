@@ -76,7 +76,12 @@ python3 scripts/deploy-prod-online-catalog.py identity \
 **实测（run `43213975231`，2026-11-12）**：identity、amd64 构建、归档校验、SSH、
 只读 preflight 全部 PASS。preflight 读到：源容器 `budu-prod-e91561238b86-golive` 健康、
 `GIT_SHA=e9156123`、账本 91 条无失败/回滚、两张新表不存在、磁盘 ≥ 12 GiB。
-部署步骤未执行。
+
+**生产执行（2026-11-12 20:56–21:00）**：`DEPLOY_COMPLETE`，release
+`1d195a036a468d787f696b019477d6212f3d1a00`。新容器
+`budu-prod-1d195a036a46-golive` healthy，旧容器已停并保留；公网健康 `gitSha=1d195a03`、
+`dbOk=true`；迁移 92 条 failed 0；业务行数不变；`/online-catalog` 返回 200。
+详见 `budu-online-catalog-release-20261112/RESULT.md`。
 
 ## 5. 发布前必须补齐
 

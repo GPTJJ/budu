@@ -4,6 +4,13 @@
 > 生产基线：`e91561238b86`（`/api/health` 实测，V2.20）
 > 环境：只有北京生产（`154.8.195.42` / `/opt/budu`），**没有测试环境**
 
+## 执行记录（2026-11-12）
+
+- 结果：`DEPLOY_COMPLETE`，release `1d195a036a468d787f696b019477d6212f3d1a00`
+- 新容器 `budu-prod-1d195a036a46-golive` healthy；旧容器已停并保留
+- 迁移 92 条，failed 0，rolledBack 0；业务行数不变；`/online-catalog` 200
+- 详见 `budu-online-catalog-release-20261112/RESULT.md`
+
 ## 0. 发布通道约束（2026-11-12 实测）
 
 `Deploy to Beijing Prod` 的 post-transfer 画像**明确禁止任何 Prisma 变更**：
