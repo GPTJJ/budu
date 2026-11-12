@@ -40,19 +40,26 @@ function fakeApp() {
     },
     doc(id) {
       return {
-        async update({ data }) {
+        // @cloudbase/node-sdk takes the payload directly (no { data } wrapper).
+        async update(payload) {
+          if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('update payload must be an object')
+          if ('data' in payload) throw new Error('do not wrap payloads in { data } — node-sdk takes fields directly')
           const current = docs.get(id)
           if (!current) throw new Error('missing doc')
-          docs.set(id, { ...current, ...data })
+          docs.set(id, { ...current, ...payload })
         },
-        async set({ data }) {
-          docs.set(id, { _id: id, ...data })
+        async set(payload) {
+          if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('set payload must be an object')
+          if ('data' in payload) throw new Error('do not wrap payloads in { data } — node-sdk takes fields directly')
+          docs.set(id, { _id: id, ...payload })
         },
       }
     },
-    async add({ data }) {
+    async add(payload) {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('add payload must be an object')
+      if ('data' in payload) throw new Error('do not wrap payloads in { data } — node-sdk takes fields directly')
       const _id = `_${++sequence}`
-      docs.set(_id, { _id, ...data })
+      docs.set(_id, { _id, ...payload })
       return { _id }
     },
   })

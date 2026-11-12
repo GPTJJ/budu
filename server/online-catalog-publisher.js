@@ -109,32 +109,42 @@ export function createOnlineCatalogPublisher({ app, envId = '', logger = console
     doc.media = await materializeMedia(doc.media, doc.id)
     const existing = await readProduct(doc.id)
     if (existing) {
-      await db.collection(COLLECTION).doc(existing._id).update({ data: doc })
+      // @cloudbase/node-sdk document.update/add/set take the payload directly
+      // (unlike the wx client SDK's { data: ... } wrapper).
+      await db.collection(COLLECTION).doc(existing._id).update(doc)
     } else {
-      await db.collection(COLLECTION).add({ data: doc })
+      await db.collection(COLLECTION).add(doc)
     }
-    const readBack = await readProduct(doc.id)
+    // CloudBase is eventually consistent: retry the read-back so a stale
+    // snapshot right after the write does not fail checksum verification.
+    let readBack = null
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 * attempt))
+      readBack = await readProduct(doc.id)
+      if (!readBack) continue
+      const actual = checksum({
+        id: readBack.id,
+        name: readBack.name,
+        category: readBack.category,
+        status: readBack.status,
+        sortOrder: readBack.sortOrder,
+        unit: readBack.unit,
+        spec: readBack.spec,
+        unitPriceCent: readBack.unitPriceCent,
+        shelfLife: readBack.shelfLife,
+        storage: readBack.storage,
+        subtitle: readBack.subtitle,
+        media: readBack.media || {},
+        combo: readBack.combo ?? null,
+        categoryMeta: readBack.categoryMeta || {},
+      })
+      if (checksum(doc) === actual) {
+        logger.info?.('[online-catalog] published', { mpId: doc.id, envId, action: existing ? 'updated' : 'created', checksum: actual, attempts: attempt + 1 })
+        return { action: existing ? 'updated' : 'created', checksum: actual, doc }
+      }
+    }
     if (!readBack) throw httpError('发布后回读不到商品', 502)
-    const expected = checksum(doc)
-    const actual = checksum({
-      id: readBack.id,
-      name: readBack.name,
-      category: readBack.category,
-      status: readBack.status,
-      sortOrder: readBack.sortOrder,
-      unit: readBack.unit,
-      spec: readBack.spec,
-      unitPriceCent: readBack.unitPriceCent,
-      shelfLife: readBack.shelfLife,
-      storage: readBack.storage,
-      subtitle: readBack.subtitle,
-      media: readBack.media || {},
-      combo: readBack.combo ?? null,
-      categoryMeta: readBack.categoryMeta || {},
-    })
-    if (expected !== actual) throw httpError('发布回读校验失败，请重试', 502)
-    logger.info?.('[online-catalog] published', { mpId: doc.id, envId, action: existing ? 'updated' : 'created', checksum: expected })
-    return { action: existing ? 'updated' : 'created', checksum: expected, doc }
+    throw httpError('发布回读校验失败，请重试', 502)
   }
 
   async function publishCategories(categories) {
@@ -143,8 +153,8 @@ export function createOnlineCatalogPublisher({ app, envId = '', logger = console
     const metaRef = db.collection(COLLECTION).doc(META_DOC)
     let existing = null
     try { existing = await metaRef.get() } catch { existing = null }
-    if (existing?.data && !Array.isArray(existing.data)) await metaRef.update({ data: { categories: names } })
-    else await metaRef.set({ data: { categories: names } })
+    if (existing?.data && !Array.isArray(existing.data)) await metaRef.update({ categories: names })
+    else await metaRef.set({ categories: names })
     logger.info?.('[online-catalog] categories published', { envId, count: names.length })
     return { categories: names }
   }
