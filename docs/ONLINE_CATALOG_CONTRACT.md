@@ -1,7 +1,7 @@
 # ONLINE-CATALOG-ADMIN-001 生产发布合约
 
-> 状态：身份、账本、只读 preflight 与蓝绿部署编排均已实现；**尚未在生产执行过**。
-> 首次运行请用 `preflight_only=true`（默认），确认归档与只读检查通过后再授权部署。
+> 状态：身份、账本、只读 preflight 与蓝绿部署编排均已实现；
+> **真实 preflight 被生产模型的 `SOURCE_LABELS_UNSUPPORTED` 阻断（见 §6），尚未部署。**
 
 ## 1. 为什么需要单独合约
 
@@ -81,7 +81,39 @@ python3 scripts/deploy-prod-online-catalog.py identity \
 - [ ] live proof JSON（容器 ID/镜像、路由哈希、runtimeHash、resourcesHash、账本）
 - [x] 独立 workflow 入口，且 `authorize_release_sha` 必须等于 release
 
-## 6. 明确不做的事
+## 6. 生产模型阻断（2026-11-12 实测）
+
+`preflight` 在真实生产上返回：
+
+```
+{"result": "BLOCKED", "code": "SOURCE_LABELS_UNSUPPORTED"}
+```
+
+原因是当前生产容器不是标准 post-transfer 候选，而是 **thin/golive 覆盖层**：
+
+| 项 | 实测值 |
+|---|---|
+| 容器 | `budu-prod-e91561238b86-golive` |
+| 镜像 | 587 MB / 44 层（全量镜像约 2.3 GB） |
+| labels | `budu.production-role=golive-candidate`、`budu.thin-base=adcfa1926…`、`budu.thin-overlay-sha256=608ffd4c…`、`revision=e9156123…` |
+| RestartPolicy | `no`（克隆契约要求 `unless-stopped`） |
+| 网络 | `budu-bj-006-…-net` **和** `budu_default` 两个 |
+
+`deploy-prod-transfer-cas.py` 的 `validate_clone_source` 要求 labels 恰为
+`{revision, budu.production-role=candidate}`、单网络、`unless-stopped`；
+`bg_clone` 的 `clone_parity` 也要求网络集合一致。两者都无法处理当前 golive 容器。
+
+**影响不止本功能**：标准 `Deploy to Beijing Prod` 同样会在 preflight 之后因同一原因失败，
+即当前生产形态与仓库内所有发布工具都不匹配。这个 golive 容器不是本仓库任何脚本创建的
+（全分支检索无 `golive` 关键字），需要确认它的来源与配套的 thin 覆盖层构建流程。
+
+本功能只有在以下任一条件满足后才能继续：
+
+1. 找到/补齐创建 golive 容器的工具，按同一模型构建 thin 覆盖层；
+2. 经批准把生产切回标准全量镜像模型（本合约的 `bg_clone` 路径即可直接使用）；
+3. 由发布负责人按其现有流程执行迁移与发布。
+
+## 7. 明确不做的事
 
 - 不修改 `deploy-prod-transfer-cas.py`（哈希被现有合约锁定）。
 - 不绕过 `SCHEMA_CHANGED` 检查去发“代码-only”版本。
