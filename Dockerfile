@@ -13,6 +13,10 @@ ENV NODE_ENV=production
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 WORKDIR /app
 
+# deb.debian.org is heavily throttled from the Beijing host; use the Tencent mirror.
+RUN sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g; s|security.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list \
+  || sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g; s|security.debian.org|mirrors.cloud.tencent.com|g' /etc/apt/sources.list.d/debian.sources
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates chromium fonts-noto-cjk wget \
   && rm -rf /var/lib/apt/lists/*
