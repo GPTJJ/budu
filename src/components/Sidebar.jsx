@@ -18,7 +18,11 @@ import { t } from '../utils/text'
 import AccountMenu from './AccountMenu'
 import BrandSlot from './BrandSlot'
 import { APP_VERSION } from '../version'
-import { MODULE_KEYS, SWEET_CARD_CAPABILITIES, hasModuleAccess, hasPageAccess, hasSweetCardCapability } from '../../shared/accountPermissions'
+import { MODULE_KEYS, SWEET_CARD_CAPABILITIES, hasModuleAccess, hasPageAccess, hasSweetCardCapability, isSuperUser } from '../../shared/accountPermissions'
+
+// 与服务端 requireCatalogManager 保持一致的入口可见性（不可见 ≠ 越权，接口侧仍会 403）
+const canManageOnlineCatalog = (user) =>
+  Boolean(isSuperUser(user) || (user?.role === 'manager' && user?.status !== 'disabled' && hasModuleAccess(user, MODULE_KEYS.PRODUCT_CENTER)))
 
 const menus = [
   { key: 'overview', label: '首页概览', icon: LayoutDashboard },
@@ -47,6 +51,7 @@ const subMenus = {
     { key: 'store-mailing', label: '门店邮寄' },
     { key: 'store-pos', label: 'POS 点单' },
     { key: 'product-center', label: '商品中心' },
+    { key: 'online-catalog', label: '小程序商品', href: '/online-catalog' },
   ],
   inventory: [
     { key: 'inventory-transfer', label: '门店调拨' },
@@ -70,6 +75,8 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
   const visibleMenus = menus.filter((item) => {
     if (item.key === MODULE_KEYS.SWEET_CARD) return hasModuleAccess(user, item.key) && hasSweetCardCapability(user, SWEET_CARD_CAPABILITIES.VIEW)
     const keys = groupModules[item.key]
+    // 「门店经营」组额外考虑小程序商品管理入口（finance/admin 可无门店模块但可管理线上目录）
+    if (item.key === 'store' && !keys.some((key) => hasModuleAccess(user, key)) && canManageOnlineCatalog(user)) return true
     return keys ? keys.some((key) => hasModuleAccess(user, key)) : hasModuleAccess(user, item.key)
   })
 
@@ -104,7 +111,7 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
         {visibleMenus.map((item) => {
           const Icon = item.icon
           // 商品中心已并入「门店经营」：staff 无商品权限，子菜单中隐藏（与页面权限一致）
-          const subs = (subMenus[item.key] || []).filter((sub) => hasPageAccess(user, sub.moduleKey || sub.key))
+          const subs = (subMenus[item.key] || []).filter((sub) => (sub.href ? canManageOnlineCatalog(user) : hasPageAccess(user, sub.moduleKey || sub.key)))
           const openSub = isSubmenuOpen(item.key)
           const active = item.key === 'overview' ? view === 'overview' : openSub
 
@@ -132,6 +139,20 @@ export default function Sidebar({ open, onClose, view, onNavigate, user, onUserC
                   <div className="ml-[18px] mt-1 space-y-1 border-l-2 border-slate-200/80 pl-3">
                     {subs.map((sub) => {
                       const subActive = view === sub.key
+                      // 独立路由入口（/online-catalog）：整页跳转而非内部 view 切换
+                      if (sub.href) {
+                        return (
+                          <a
+                            key={sub.key}
+                            href={sub.href}
+                            onClick={() => onClose()}
+                            className="flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 py-1.5 text-[13px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 lg:min-h-11 lg:py-2"
+                          >
+                            <span className="text-[9px] text-slate-300">●</span>
+                            {t(sub.label)}
+                          </a>
+                        )
+                      }
                       return (
                         <button
                           key={sub.key}
