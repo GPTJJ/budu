@@ -433,7 +433,7 @@ def bootstrap_source():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['identity', 'inspect-artifact', 'preflight', 'deploy'])
+    parser.add_argument('mode', choices=['identity', 'inspect-artifact', 'preflight', 'deploy', 'deploy-local'])
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--release-sha', required=True)
     parser.add_argument('--archive', type=Path)
@@ -457,6 +457,15 @@ def main():
     if args.mode == 'inspect-artifact':
         print(json.dumps({'result': 'ARTIFACT_IDENTITY_PASS', 'archiveSha256': art['archiveHash'],
                           'archiveBytes': art['archive'], 'release': args.release_sha}))
+        return
+    if args.mode == 'deploy-local':
+        import os
+        require(os.geteuid() == 0, 'ROOT_REQUIRED')
+        require(args.authorize_release_sha == args.release_sha, 'EXACT_RELEASE_AUTHORIZATION_REQUIRED')
+        m.configure_profile('post-transfer', BASE, BUSINESS, old_v2)
+        value['archivePath'] = str(args.archive)
+        with open(args.archive, 'rb') as archive:
+            print(json.dumps(execute(m.LocalRemote(), value, archive, m)))
         return
     require(args.ssh_key is not None, 'SSH_REQUIRED')
     remote = m.Remote(args.ssh_key)
