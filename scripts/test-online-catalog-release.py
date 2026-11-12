@@ -58,7 +58,7 @@ class IdentityTests(unittest.TestCase):
     def test_identity_passes_on_the_release_commit(self):
         result = contract.identity(REPO, self.head)
         self.assertEqual(result['result'], 'IDENTITY_PASS')
-        self.assertFalse(result['deployImplemented'])
+        self.assertEqual(result['migration'], contract.MIGRATION)
 
     def test_wrong_sql_hash_is_rejected(self):
         original = contract.SQL_HASH
@@ -103,7 +103,8 @@ class MigrationSqlTests(unittest.TestCase):
 
     def test_sql_pins_the_old_ledger(self):
         sql = contract.migration_sql({'release': 'a' * 40, 'oldLedger': {'m1': 'c' * 64}, 'sql': ''})
-        self.assertIn('"m1": "c"', sql.replace("'", '"'))
+        self.assertIn("'m1'", sql)
+        self.assertIn('c' * 64, sql)
 
 
 if __name__ == '__main__':
