@@ -43,6 +43,11 @@ function Field({ label, children, hint }) {
 
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
 
+function mediaPreview(product) {
+  const value = product.media?.cover || product.media?.gallery?.[0] || ''
+  return value && !String(value).startsWith('cloud://') ? value : ''
+}
+
 function Modal({ title, children, onClose, wide = false }) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 px-3 py-8">
@@ -169,6 +174,33 @@ export default function OnlineCatalogPage() {
     } catch (err) {
       setError(err.message || '图片处理失败')
     }
+  }
+
+  const onMediaFiles = async (files, key) => {
+    const limit = key === 'gallery' ? 9 : 20
+    const selected = Array.from(files || []).slice(0, limit)
+    if (!selected.length) return
+    try {
+      const urls = []
+      for (const file of selected) urls.push(await compressProductImage(file))
+      setForm((current) => ({
+        ...current,
+        media: {
+          ...(current.media || {}),
+          [key]: [...((current.media || {})[key] || []), ...urls].slice(0, limit),
+        },
+      }))
+      setError('')
+    } catch (err) {
+      setError(err.message || '图片处理失败')
+    }
+  }
+
+  const removeMedia = (key, index) => {
+    setForm((current) => ({
+      ...current,
+      media: { ...(current.media || {}), [key]: ((current.media || {})[key] || []).filter((_, i) => i !== index) },
+    }))
   }
 
   const save = async () => {
@@ -345,8 +377,8 @@ export default function OnlineCatalogPage() {
             {visible.map((product) => (
               <div key={product.id} className="grid grid-cols-1 gap-3 border-b border-slate-100 px-4 py-3 last:border-0 md:grid-cols-[64px_1.6fr_1fr_100px_100px_130px] md:items-center">
                 <div className="h-14 w-14 overflow-hidden rounded-xl bg-slate-100">
-                  {product.media?.cover && !String(product.media.cover).startsWith('cloud://') ? (
-                    <img src={product.media.cover} alt="" className="h-full w-full object-cover" />
+                  {mediaPreview(product) ? (
+                    <img src={mediaPreview(product)} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <div className="grid h-full w-full place-items-center text-[10px] text-slate-400">无预览</div>
                   )}
@@ -455,6 +487,35 @@ export default function OnlineCatalogPage() {
                 <button type="button" className="text-xs text-rose-500" onClick={() => update('media', { ...(form.media || {}), cover: '' })}>移除封面</button>
               </div>
             ) : null}
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="轮播图（可多选）" hint="最多 9 张；第一张会作为卡片主图">
+                <input type="file" accept="image/*" multiple className="block w-full text-xs text-slate-500" onChange={(event) => onMediaFiles(event.target.files, 'gallery')} />
+              </Field>
+              <Field label="详情图（可多选）" hint="最多 20 张">
+                <input type="file" accept="image/*" multiple className="block w-full text-xs text-slate-500" onChange={(event) => onMediaFiles(event.target.files, 'detail')} />
+              </Field>
+            </div>
+
+            {['gallery', 'detail'].map((key) => (
+              (form.media?.[key] || []).length ? (
+                <div key={key} className="rounded-xl border border-slate-200 p-2">
+                  <div className="mb-1 text-[11px] text-slate-400">{key === 'gallery' ? '轮播图' : '详情图'}（{form.media[key].length}）</div>
+                  <div className="flex flex-wrap gap-2">
+                    {form.media[key].map((src, index) => (
+                      <div key={`${key}-${index}`} className="relative h-16 w-16 overflow-hidden rounded-lg bg-slate-100">
+                        {String(src).startsWith('cloud://') ? (
+                          <div className="grid h-full w-full place-items-center text-[10px] text-slate-400">已上传</div>
+                        ) : (
+                          <img src={src} alt="" className="h-full w-full object-cover" />
+                        )}
+                        <button type="button" className="absolute right-0 top-0 rounded-bl bg-slate-900/60 px-1 text-[10px] text-white" onClick={() => removeMedia(key, index)}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null
+            ))}
 
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
               <button type="button" className="rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600" onClick={() => setForm(null)}>取消</button>
