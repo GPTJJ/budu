@@ -113,6 +113,8 @@ OS 管理页 /online-catalog
 - 分类管理：新增、改名、排序、停用。
 - 发布单条、批量发布接口（页面当前是单条发布）。
 - 导入现有商品。
+- 发布配置状态提示：未配置 `TCB_*` 时页面显示黄色提示，保存/导入可用、发布不可用。
+- 发布预览：发布前查看将写入 CloudBase 的文档（图片以占位符显示），用于核对字段和价格。
 - 封面图前端压缩到 <600KB；轮播图（最多 9 张）和详情图（最多 20 张）支持多选上传与逐张移除；发布时统一上传 CloudBase 存储。
 
 ## 6. 权限与安全
@@ -143,7 +145,7 @@ OS 管理页 /online-catalog
 - `npm run build`：PASS，生成 `OnlineCatalogPage-*.js`。
 - 临时 PostgreSQL 16 实例（端口 55432，非生产）：`prisma migrate deploy` 全部迁移 PASS；`online_categories` / `online_product_profiles` 建表、唯一索引、外键均通过；重复 `mp_id`、缺失 `InventoryItem`、删除有档案的分类均按预期拒绝。
 - 真实 Prisma 查询：分类/商品/策略创建、`inventoryItem.is` 关系过滤、`onlineProfile.is null` 过滤、`version increment`、policy upsert/updateMany、P2002/P2003 均 PASS。
-- `node scripts/test-online-catalog-api-native.mjs`：真实 HTTP 路由测试 PASS（建分类 → 建 OS 商品+线上档案+policy → 线上价 1300/POS 价 1250 → 列表 → 改价 1400/下架 → policy 自动禁用 → 已建档商品不再出现在可选列表 → 重复建档 409）。
+- `node scripts/test-online-catalog-api-native.mjs`：真实 HTTP 路由测试 PASS（建分类 → 建 OS 商品+线上档案+policy → 线上价 1300/POS 价 1250 → 列表 → 状态接口 → 发布预览 → 改价 1400/下架 → policy 自动禁用 → 已建档商品不再出现在可选列表 → 重复建档 409）。
 - 未执行：真实 CloudBase 发布、浏览器端到端点击。CloudBase 凭据未配置；发布器只用 fake app 做了单元测试。
 
 ## 9. 回滚

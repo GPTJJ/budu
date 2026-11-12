@@ -12,6 +12,7 @@ const suffix = 'apitest'
 const mpId = 'c-apitest'
 const categoryName = `API测试分类-${suffix}`
 const itemName = `API测试商品-${suffix}`
+const cover = `data:image/png;base64,${Buffer.from('cover').toString('base64')}`
 
 async function cleanup() {
   await prisma.onlineProductPolicy.deleteMany({ where: { externalProductId: mpId } }).catch(() => {})
@@ -74,7 +75,7 @@ try {
       storage: '冷冻',
       sortOrder: 50,
       status: 'ON',
-      media: { cover: '', gallery: [], detail: [] },
+      media: { cover, gallery: [], detail: [] },
     }),
   })
   assert.equal(created.status, 201, JSON.stringify(created.data))
@@ -88,6 +89,17 @@ try {
   })
   assert.ok(policy, 'policy must exist')
   assert.equal(policy.enabled, true)
+
+  const status = await call('/online-catalog/status')
+  assert.equal(status.status, 200)
+  assert.equal(status.data.cloudbase.configured, false)
+  assert.ok(status.data.counts.products >= 1)
+
+  const preview = await call(`/online-catalog/products/${created.data.product.id}/preview`)
+  assert.equal(preview.status, 200)
+  assert.equal(preview.data.doc.id, mpId)
+  assert.equal(preview.data.doc.unitPriceCent, 1300)
+  assert.match(preview.data.doc.media.cover, /^\[embedded image /)
 
   const list = await call('/online-catalog/products')
   assert.equal(list.status, 200)

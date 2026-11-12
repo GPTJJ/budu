@@ -14,7 +14,7 @@ import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { httpError, parseCents } from './pos-core.js'
 import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
-import { getOnlineCatalogPublisher } from './online-catalog-publisher.js'
+import { getOnlineCatalogPublisher, buildProductDoc } from './online-catalog-publisher.js'
 
 export const ONLINE_CATALOG_NAMESPACE = 'cloudbase-miniprogram'
 export const ONLINE_CATALOG_STATUSES = ['DRAFT', 'ON', 'OFF']
@@ -202,6 +202,18 @@ export function serializeProfile(profile) {
   }
 }
 
+function previewMedia(media) {
+  const summarize = (value) => (typeof value === 'string' && /^data:image\//i.test(value)
+    ? `[embedded image ${Math.round(value.length / 1024)}KB]`
+    : value)
+  const source = media && typeof media === 'object' ? media : {}
+  return {
+    cover: summarize(source.cover || ''),
+    gallery: Array.isArray(source.gallery) ? source.gallery.map(summarize) : [],
+    detail: Array.isArray(source.detail) ? source.detail.map(summarize) : [],
+  }
+}
+
 const profileInclude = { category: true, inventoryItem: true }
 
 async function loadProfile(id) {
@@ -233,6 +245,23 @@ async function publishOne(profile) {
 }
 
 export const onlineCatalogRouter = Router()
+
+onlineCatalogRouter.get('/online-catalog/status', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const [categories, products] = await Promise.all([
+    prisma.onlineCategory.count(),
+    prisma.onlineProductProfile.count(),
+  ])
+  res.json({
+    ok: true,
+    cloudbase: {
+      configured: Boolean(process.env.TCB_ENV_ID && process.env.TCB_SECRET_ID && process.env.TCB_SECRET_KEY),
+      envId: String(process.env.TCB_ENV_ID || ''),
+    },
+    counts: { categories, products },
+  })
+}))
 
 onlineCatalogRouter.get('/online-catalog/categories', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
@@ -416,6 +445,15 @@ onlineCatalogRouter.put('/online-catalog/products/:id', wrap(async (req, res) =>
     return profile
   })
   res.json({ ok: true, product: serializeProfile(updated) })
+}))
+
+onlineCatalogRouter.get('/online-catalog/products/:id/preview', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const profile = await loadProfile(req.params.id)
+  if (!profile.category) throw httpError('请先选择线上分类', 409)
+  const doc = buildProductDoc({ profile, category: profile.category, item: profile.inventoryItem })
+  res.json({ ok: true, doc: { ...doc, media: previewMedia(doc.media) } })
 }))
 
 onlineCatalogRouter.post('/online-catalog/products/:id/publish', wrap(async (req, res) => {

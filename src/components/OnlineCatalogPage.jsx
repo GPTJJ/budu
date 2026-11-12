@@ -76,17 +76,21 @@ export default function OnlineCatalogPage() {
   const [items, setItems] = useState([])
   const [itemQuery, setItemQuery] = useState('')
   const [busy, setBusy] = useState(false)
+  const [cloudbaseConfigured, setCloudbaseConfigured] = useState(null)
+  const [previewDoc, setPreviewDoc] = useState(null)
 
   const load = async () => {
     setLoading(true)
     setError('')
     try {
-      const [categoryResult, productResult] = await Promise.all([
+      const [categoryResult, productResult, statusResult] = await Promise.all([
         api('/v2/online-catalog/categories'),
         api('/v2/online-catalog/products'),
+        api('/v2/online-catalog/status').catch(() => null),
       ])
       setCategories(categoryResult.categories || [])
       setProducts(productResult.products || [])
+      setCloudbaseConfigured(statusResult?.cloudbase?.configured ?? null)
     } catch (err) {
       setError(err.message || '加载失败')
     } finally {
@@ -271,6 +275,19 @@ export default function OnlineCatalogPage() {
     }
   }
 
+  const previewProduct = async (product) => {
+    setBusy(true)
+    setError('')
+    try {
+      const { doc } = await api(`/v2/online-catalog/products/${product.id}/preview`)
+      setPreviewDoc({ product, doc })
+    } catch (err) {
+      setError(err.message || '预览失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const publish = async (product) => {    setBusy(true)
     setError('')
     setNotice('')
@@ -362,6 +379,11 @@ export default function OnlineCatalogPage() {
 
         {error ? <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">{error}</div> : null}
         {notice ? <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">{notice}</div> : null}
+        {cloudbaseConfigured === false ? (
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-700">
+            CloudBase 发布凭据未配置（TCB_ENV_ID / TCB_SECRET_ID / TCB_SECRET_KEY）：可以保存和导入，发布不可用。
+          </div>
+        ) : null}
 
         {loading ? (
           <div className="rounded-2xl bg-white p-10 text-center text-sm text-slate-400">加载中…</div>
@@ -371,11 +393,11 @@ export default function OnlineCatalogPage() {
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-            <div className="hidden grid-cols-[64px_1.6fr_1fr_100px_100px_130px] gap-3 border-b border-slate-100 px-4 py-2 text-[11px] font-medium text-slate-400 md:grid">
+            <div className="hidden grid-cols-[64px_1.6fr_1fr_100px_100px_170px] gap-3 border-b border-slate-100 px-4 py-2 text-[11px] font-medium text-slate-400 md:grid">
               <div>图片</div><div>商品</div><div>分类</div><div>线上价</div><div>状态</div><div className="text-right">操作</div>
             </div>
             {visible.map((product) => (
-              <div key={product.id} className="grid grid-cols-1 gap-3 border-b border-slate-100 px-4 py-3 last:border-0 md:grid-cols-[64px_1.6fr_1fr_100px_100px_130px] md:items-center">
+              <div key={product.id} className="grid grid-cols-1 gap-3 border-b border-slate-100 px-4 py-3 last:border-0 md:grid-cols-[64px_1.6fr_1fr_100px_100px_170px] md:items-center">
                 <div className="h-14 w-14 overflow-hidden rounded-xl bg-slate-100">
                   {mediaPreview(product) ? (
                     <img src={mediaPreview(product)} alt="" className="h-full w-full object-cover" />
@@ -398,6 +420,7 @@ export default function OnlineCatalogPage() {
                   <div className="mt-1 text-[10px] text-slate-400">{PUBLISH_LABEL[product.publishState] || product.publishState}</div>
                 </div>
                 <div className="flex items-center justify-end gap-1.5">
+                  <button type="button" className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] text-slate-500 hover:bg-slate-50" onClick={() => previewProduct(product)} disabled={busy}>预览</button>
                   <button type="button" className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50" onClick={() => openEdit(product)}>编辑</button>
                   <button type="button" className="rounded-lg bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-50" onClick={() => publish(product)} disabled={busy}>发布</button>
                 </div>
@@ -522,6 +545,13 @@ export default function OnlineCatalogPage() {
               <button type="button" className="rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={save} disabled={busy}>保存</button>
             </div>
           </div>
+        </Modal>
+      ) : null}
+
+      {previewDoc ? (
+        <Modal title={`发布预览 ${previewDoc.doc.id}`} onClose={() => setPreviewDoc(null)} wide>
+          <p className="mb-2 text-xs text-slate-400">这是将写入 CloudBase 的文档内容（图片以占位符显示）。发布前可据此核对字段。</p>
+          <pre className="max-h-[60vh] overflow-auto rounded-xl bg-slate-900 p-4 text-xs leading-5 text-slate-100">{JSON.stringify(previewDoc.doc, null, 2)}</pre>
         </Modal>
       ) : null}
 
