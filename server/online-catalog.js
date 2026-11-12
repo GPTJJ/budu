@@ -71,6 +71,12 @@ export function priceCentsFrom(body, label = '线上售价') {
   return null
 }
 
+export function hasPriceInput(body) {
+  const source = body && typeof body === 'object' ? body : {}
+  return (source.priceCents !== undefined && source.priceCents !== null && source.priceCents !== '') ||
+    (source.price !== undefined && source.price !== null && source.price !== '')
+}
+
 export function normalizeMedia(value) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const strings = (list, maxItems, label) => {
@@ -141,9 +147,11 @@ export async function suggestMpId(tx, categoryName) {
 export function productProfileData(body, { existing = null, item = null } = {}) {
   const status = String(body.status ?? existing?.status ?? 'DRAFT').toUpperCase()
   if (!ONLINE_CATALOG_STATUSES.includes(status)) throw httpError('状态只能是 DRAFT、ON 或 OFF')
-  const priceCents = priceCentsFrom(body.priceCents !== undefined || body.price !== undefined
-    ? body
-    : { priceCents: existing?.priceCents ?? item?.salePriceCents ?? null }, '线上售价')
+  // 空字符串视同“未填写”：新建时默认跟随 POS 售价，编辑时保留原线上价。
+  // 前端表单始终会带上 price: ''，若按“已提供”处理会把新商品的上架价变成 null。
+  const priceCents = hasPriceInput(body)
+    ? priceCentsFrom(body, '线上售价')
+    : priceCentsFrom({ priceCents: existing?.priceCents ?? item?.salePriceCents ?? null }, '线上售价')
   if (status === 'ON' && (priceCents === null || priceCents <= 0n)) throw httpError('上架前请填写大于 0 的线上售价')
   return {
     title: text(body.title !== undefined ? body.title : existing?.title || item?.name || '', 50, '线上标题', status === 'ON'),
@@ -223,7 +231,7 @@ async function loadProfile(id) {
 }
 
 async function publishOne(profile) {
-  const publisher = getOnlineCatalogPublisher()
+  const publisher = await getOnlineCatalogPublisher()
   const category = profile.category
   if (!category) throw httpError('请先选择线上分类', 409)
   if (!category.isActive) throw httpError('分类已停用，不能发布', 409)
@@ -371,7 +379,7 @@ onlineCatalogRouter.post('/online-catalog/products', wrap(async (req, res) => {
       })
     }
     const mpId = body.mpId ? normalizeMpId(body.mpId, true) : await suggestMpId(tx, category.name)
-    const resolvedPriceCents = body.priceCents !== undefined || body.price !== undefined
+    const resolvedPriceCents = hasPriceInput(body)
       ? priceCentsFrom(body, '线上售价')
       : item.salePriceCents
     const data = productProfileData({
@@ -475,7 +483,7 @@ onlineCatalogRouter.post('/online-catalog/products/:id/publish', wrap(async (req
 onlineCatalogRouter.post('/online-catalog/import-existing', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireCatalogManager(req.user)
-  const publisher = getOnlineCatalogPublisher()
+  const publisher = await getOnlineCatalogPublisher()
   const docs = await publisher.readAllProducts()
   const report = { created: [], skipped: [], unmatched: [], combo: [], inactive: [], failed: [] }
   for (const doc of docs) {

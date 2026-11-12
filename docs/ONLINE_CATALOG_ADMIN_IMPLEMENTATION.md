@@ -129,27 +129,33 @@ OS 管理页 /online-catalog
 
 ## 7. 部署步骤（候选，未执行）
 
+> 生产只有北京一套环境（`154.8.195.42`，`Deploy to Beijing Prod`）。原香港 TEST 服务器已停用，`Deploy to HK Test` 已删除。
+> `release-prod-post-transfer-ci.sh` **不执行数据库迁移**，迁移必须单独执行。
+
 1. `npm install`（新增 `@cloudbase/node-sdk`）。
-2. `npx prisma migrate deploy`（应用 `20261112120000_online_catalog_admin`）。
-3. `npx prisma generate`（Dockerfile 已有此步）。
-4. 在 OS 运行环境配置 `TCB_ENV_ID=budu-d6gz358ixe39faf43`、`TCB_SECRET_ID`、`TCB_SECRET_KEY`。
-5. `npm run build`。
-6. 重启 OS 容器；确认 `/online-catalog` 可打开。
-7. 打开页面 → “导入现有” → 核对 created/unmatched/combo 报告。
+2. 生产发布前先备份：在服务器上 `pg_dump` 生产库到 `~/.budu-backups/`，并导出 CloudBase `products` 与 `_meta` 快照。
+3. 走受控发布：`Deploy to Beijing Prod`，`expected_production_sha=<当前线上 SHA>`、`approved_business_sha=<候选 SHA>`。
+4. 发布后立即在服务器执行 `docker compose exec -T api npx prisma migrate deploy`（应用 `20261112120000_online_catalog_admin`）。迁移只新增两张表，不影响既有订单/支付路径。
+5. 在 OS 运行环境配置 `TCB_ENV_ID=budu-d6gz358ixe39faf43`、`TCB_SECRET_ID`、`TCB_SECRET_KEY`（只放环境变量）。
+6. 确认 `/api/health` 的 `gitSha` 与 `dbOk`，并打开 `/online-catalog`。
+7. “导入现有” → 核对 created/unmatched/combo 报告。
 8. 选一个商品改标题或图片 → 保存 → 发布 → 打开小程序菜单确认约 60 秒内生效。
 
 ## 8. 本地验证结果
 
 - `npx prisma validate`：PASS。
 - `prisma migrate diff --from-empty --to-schema-datamodel`：新表 SQL 与手写迁移逐项一致（表、索引、外键）。
-- `node --test scripts/test-online-catalog-admin.mjs`：10/10 PASS。
+- `node --test scripts/test-online-catalog-admin.mjs`：11/11 PASS。
 - `npm run build`：PASS，生成 `OnlineCatalogPage-*.js`。
 - 临时 PostgreSQL 16 实例（端口 55433，非生产，基于 `e9156123`）：`prisma migrate deploy` 全部迁移 PASS（含 `procurement_return`、`offline_store_services` 和本次 `online_catalog_admin`）；`online_categories` / `online_product_profiles` 建表、唯一索引、外键均通过；重复 `mp_id`、缺失 `InventoryItem`、删除有档案的分类均按预期拒绝。
 - 真实 Prisma 查询：分类/商品/策略创建、`inventoryItem.is` 关系过滤、`onlineProfile.is null` 过滤、`version increment`、policy upsert/updateMany、P2002/P2003 均 PASS。
-- `node scripts/test-online-catalog-api-native.mjs`：真实 HTTP 路由测试 PASS（建分类 → 建 OS 商品+线上档案+policy → 线上价 1300/POS 价 1250 → 列表 → 状态接口 → 发布预览 → 改价 1400/下架 → policy 自动禁用 → 已建档商品不再出现在可选列表 → 重复建档 409）。
-- Rebase 到 `e9156123` 后重新执行：单元 10/10、原生 API、`npm run build`、`prisma validate` 全部 PASS。
-- **TEST 部署尝试（run 43185608600）**：在 “Configure SSH” 步骤失败（`ssh-keyscan` 退出 1），未执行 checkout 后的任何部署、构建或迁移；原因指向 TEST 主机不可达或 `HK_*`/`TENCENT_*` 主机密钥失效。
-- 未执行：真实 CloudBase 发布、浏览器端到端点击。CloudBase 凭据未配置；发布器只用 fake app 做了单元测试。
+- `node scripts/test-online-catalog-api-native.mjs`：真实 HTTP 路由测试 PASS（建分类 → 建 OS 商品+线上档案+policy → 线上价 1300/POS 价 1250 → 列表 → 状态接口 → 发布预览 → 改价 1400/下架 → policy 自动禁用 → 已建档商品不再出现在可选列表 → 重复建档 409 → 未配置凭据时发布/导入返回 503 且服务存活）。
+- Rebase 到 `e9156123` 后重新执行：单元、原生 API、`npm run build`、`prisma validate` 全部 PASS。
+- **本地真实浏览器端到端**（临时 PG 55436 + `node server/index.js` + Playwright WebKit）：登录 → 建分类 → 建商品（POS 价 12.50、线上价留空）→ 列表显示 ¥12.50 → 发布预览 `unitPriceCent=1250` → 未配置凭据发布返回明确错误且标记“发布失败” → 服务未崩溃。`scripts/e2e-online-catalog-browser.mjs`。
+- 本轮端到端发现并修复两个真实缺陷：
+  1. 新建商品“线上价留空=跟随 POS 售价”实际未生效，上架直接 400；
+  2. `getOnlineCatalogPublisher()` 两处漏 `await`，未配置凭据时点击“发布”或“导入现有”会以未处理 Promise 拒绝**打崩整个 OS 进程**。
+- 未执行：真实 CloudBase 发布（凭据未配置；发布器只用 fake app 做了单元测试）。原香港 TEST 环境已停用，没有可用的测试服务器。
 
 ## 9. 回滚
 
@@ -165,6 +171,6 @@ OS 管理页 /online-catalog
 3. 相册/详情图已支持多选上传；分类视觉元数据（颜色）暂无编辑 UI，导入时沿用第一条商品的原 `categoryMeta`，新分类为空对象。
 4. 导入按名称精确匹配；重名/改名商品需要手工处理。
 5. 没有独立发布审计表；目前只有 `publishedAt / publishedVersion / lastError`。
-6. 没有真实 CloudBase 发布回执测试；上线前必须在 TEST 环境或生产快照上做一次无变更发布。
+6. 没有真实 CloudBase 发布回执测试；原香港 TEST 环境已停用，上线前只能在生产快照/生产环境做一次无变更发布验证。
 7. 线上价与 POS 价允许不一致；这是有意的，但运营需要知道两套价格。
 8. 新建商品默认在 OS 启用（`isActive=true`），草稿也会出现在 POS 商品中心；如不希望，需要后续加“仅线上”开关。

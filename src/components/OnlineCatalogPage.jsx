@@ -288,7 +288,8 @@ export default function OnlineCatalogPage() {
     }
   }
 
-  const publish = async (product) => {    setBusy(true)
+  const publish = async (product) => {
+    setBusy(true)
     setError('')
     setNotice('')
     try {

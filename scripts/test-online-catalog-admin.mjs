@@ -137,3 +137,13 @@ test('productProfileData defaults price and identity from an existing item', () 
 test('productProfileData refuses an ON product without a price', () => {
   assert.throws(() => productProfileData({ status: 'ON', title: 'x' }, { item: { name: 'x', salePriceCents: null } }), /售价/)
 })
+
+test('productProfileData treats an empty price field as “not provided”', () => {
+  const created = productProfileData({ status: 'ON', price: '' }, { item: { name: 'x', salePriceCents: 1250n } })
+  assert.equal(created.priceCents, 1250n, '新建时空白线上价应跟随 POS 售价')
+  const edited = productProfileData(
+    { status: 'ON', price: '' },
+    { existing: { title: '旧标题', priceCents: 990n }, item: { name: 'x', salePriceCents: 1250n } },
+  )
+  assert.equal(edited.priceCents, 990n, '编辑时空白线上价应保留原值')
+})

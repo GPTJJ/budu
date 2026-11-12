@@ -137,6 +137,18 @@ try {
   })
   assert.equal(duplicate.status, 409)
 
+  // 未配置 TCB 凭据时必须 fail closed，且不得让未处理的 Promise 拒绝打崩进程。
+  const publish = await call(`/online-catalog/products/${created.data.product.id}/publish`, { method: 'POST' })
+  assert.equal(publish.status, 503, JSON.stringify(publish.data))
+  assert.match(String(publish.data.error), /CloudBase|凭据/)
+  const failedProfile = await prisma.onlineProductProfile.findUnique({ where: { id: created.data.product.id } })
+  assert.equal(failedProfile.publishState, 'FAILED')
+  assert.ok(failedProfile.lastError)
+  const importWithoutCreds = await call('/online-catalog/import-existing', { method: 'POST' })
+  assert.equal(importWithoutCreds.status, 503, JSON.stringify(importWithoutCreds.data))
+  const stillAlive = await call('/online-catalog/categories')
+  assert.equal(stillAlive.status, 200, 'publish failure must not take down the server')
+
   console.log('API_TEST_PASS')
 } catch (error) {
   failure = error
