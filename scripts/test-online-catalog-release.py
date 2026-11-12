@@ -78,13 +78,32 @@ class IdentityTests(unittest.TestCase):
         finally:
             contract.ENGINEERING_FILES = original
 
-    def test_deploy_mode_fails_closed(self):
+    def test_deploy_without_archive_is_rejected(self):
         output = subprocess.run(
             [sys.executable, str(REPO / 'scripts/deploy-prod-online-catalog.py'), 'deploy',
              '--repo', str(REPO), '--release-sha', self.head],
             capture_output=True, text=True)
-        self.assertEqual(output.returncode, 2)
-        self.assertIn('ONLINE_CATALOG_DEPLOY_NOT_IMPLEMENTED', output.stdout)
+        self.assertEqual(output.returncode, 1)
+        self.assertIn('ARCHIVE_REQUIRED', output.stdout)
+
+
+class MigrationSqlTests(unittest.TestCase):
+    def test_sql_locks_ledger_and_inserts_checksum(self):
+        sql = contract.migration_sql({
+            'release': 'a' * 40,
+            'oldLedger': {'m1': 'c' * 64},
+            'sql': 'CREATE TABLE demo(id int);',
+        })
+        self.assertIn('LOCK TABLE "_prisma_migrations" IN SHARE ROW EXCLUSIVE MODE', sql)
+        self.assertIn("to_regclass('online_categories') IS NOT NULL", sql)
+        self.assertIn('CREATE TABLE demo(id int);', sql)
+        self.assertIn(contract.SQL_HASH, sql)
+        self.assertIn(contract.MIGRATION, sql)
+        self.assertTrue(sql.rstrip().endswith('COMMIT;'))
+
+    def test_sql_pins_the_old_ledger(self):
+        sql = contract.migration_sql({'release': 'a' * 40, 'oldLedger': {'m1': 'c' * 64}, 'sql': ''})
+        self.assertIn('"m1": "c"', sql.replace("'", '"'))
 
 
 if __name__ == '__main__':
