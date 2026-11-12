@@ -39,3 +39,11 @@ jobs:
           SSH_USER: ${{ secrets.HK_USER || secrets.TENCENT_USER }}
           APP_DIR: ${{ secrets.HK_APP_DIR || secrets.TENCENT_APP_DIR }}
         run: bash scripts/deploy-remote.sh "$SSH_HOST" "$SSH_USER" "$APP_DIR" "$GITHUB_SHA" test
+
+      - name: Apply TEST database migrations
+        env:
+          SSH_HOST: ${{ secrets.HK_HOST || secrets.TENCENT_HOST }}
+          SSH_USER: ${{ secrets.HK_USER || secrets.TENCENT_USER }}
+          APP_DIR: ${{ secrets.HK_APP_DIR || secrets.TENCENT_APP_DIR }}
+        run: |
+          ssh "$SSH_USER@$SSH_HOST" "cd '$APP_DIR' && docker compose exec -T api npx prisma migrate deploy"
