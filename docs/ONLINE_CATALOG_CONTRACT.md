@@ -1,7 +1,7 @@
 # ONLINE-CATALOG-ADMIN-001 生产发布合约
 
-> 状态：**身份与账本门禁已实现并通过测试；部署编排尚未实现，`deploy` 模式一律 fail closed。**
-> 不能用于生产发布，直到第 6 节的门槛全部满足。
+> 状态：身份、账本、只读 preflight 与蓝绿部署编排均已实现；**尚未在生产执行过**。
+> 首次运行请用 `preflight_only=true`（默认），确认归档与只读检查通过后再授权部署。
 
 ## 1. 为什么需要单独合约
 
@@ -49,39 +49,37 @@ python3 scripts/deploy-prod-online-catalog.py identity \
 
 测试：`python3 scripts/test-online-catalog-release.py`（篡改 SQL 哈希、多出文件、deploy 模式均被拒绝）。
 
-## 4. 尚未实现的部署编排（下一阶段）
+## 4. 部署编排（已实现，未在生产执行）
 
-必须复用 `deploy-prod-transfer-cas.py` 的蓝绿原语，顺序如下：
+复用 `deploy-prod-transfer-cas.py` 的蓝绿原语，顺序如下：
 
-1. **artifact**：复用 `m.artifact()` 校验镜像归档与 release SHA 绑定。
-2. **preflight（只读）**：
-   - `m.validate_clone_source` / `m.mount_readability` / `m.b1_storage`；
-   - 生产容器身份（label、GIT_SHA、镜像 ID）与 `EXPECTED_OLD_SHA`；
-   - 生产库 `_prisma_migrations` == 91、无失败/回滚记录、两张新表**不存在**；
-   - 发布锁不存在、回滚目录不存在、磁盘余量（≥ 12 GiB）。
-3. **migration（原子）**：
-   - `LOCK TABLE "_prisma_migrations" IN SHARE ROW EXCLUSIVE MODE`；
-   - 断言账本 91 条且无未完成记录、两张新表不存在；
-   - 执行本迁移 SQL；
-   - 插入 `_prisma_migrations` 记录（checksum = SQL sha256）；
-   - 单事务提交；超时/中断必须可判定，不允许半应用。
-4. **backup**：迁移前 `pg_dump -Fc`，并用 `pg_restore -l` 验证可读（记录字节数与 sha256）。
-5. **blue-green**：`m.bg_clone` → `m.bg_lifecycle('standby')` → Prisma/表探测 →
-   `m.bg_lifecycle('active')` → `m.bg_promote` → `m.replace_routes` → `m.health(public)`。
-6. **verify**：`User`/`InventoryItem`/`StockBalance` 行数与迁移前一致；新表列结构符合
-   Prisma 模型；`/online-catalog` 返回 200；旧容器停止但镜像保留。
-7. **rollback**：候选不健康时恢复旧容器；迁移只新增表，旧代码可安全运行；
-   回滚后保留新表并记录，不删除 `_prisma_migrations` 记录。
-8. **evidence**：写 `.rollback-assets/blue-green-<sha>/` 下的 manifest 与结果 JSON。
+1. **artifact**：`m.artifact()` 校验归档标签、平台、revision label 与运行时文件摘要。
+2. **preflight（只读）**：旧容器身份/健康、路由形状、数据库 91 条且无失败/回滚、
+   两张新表不存在、发布锁不存在、磁盘 ≥ 12 GiB。
+3. **import**：`m.bg_import` 落盘校验 sha256 后 `docker load`，`m.resolve_loaded_image` 复核。
+4. **backup**：`pg_dump -Fc` 到回滚目录，`pg_restore -l` 统计 TABLE DATA 段数并记 sha256。
+5. **migration（原子）**：锁 `_prisma_migrations`、断言账本 91 条与两张表不存在、
+   执行迁移 SQL、写入账本记录、单事务提交；随后校验 92 条与账本逐项一致。
+6. **candidate**：`m.bg_clone` 克隆旧容器为 standby → 内部健康 → `m.bg_lifecycle('standby')`
+   → Prisma 读写探测。
+7. **cutover**：写者归零 → 停旧容器 → `m.bg_promote` → `m.bg_lifecycle('active')`
+   → `m.replace_routes` → 公网健康 → 写者唯一性校验。
+8. **verify**：`User`/`InventoryItem`/`StockBalance`/`ProcurementReturn`/`ReplenishmentOrder`
+   行数与迁移前一致；新表关键列齐全；`.current-sha` 指向 release。
+9. **rollback**：任一步失败 → 停候选 → 重启旧容器 → 恢复路由与 `.current-sha` → 公网健康。
+   迁移只新增表，旧代码可安全运行；新表与账本记录保留，便于下次重试。
+
+执行入口：`.github/workflows/release-online-catalog.yml`。
+`preflight_only=true`（默认）只构建归档并跑到只读 preflight，不触碰生产。
 
 ## 5. 发布前必须补齐
 
 - [ ] CloudBase 凭据（`TCB_ENV_ID / TCB_SECRET_ID / TCB_SECRET_KEY`）配置到生产 OS 容器
 - [ ] 真实 CloudBase 发布验证（建议先 TEST 环境）
-- [ ] 部署编排实现 + `test-online-catalog-release.py` 扩展
-- [ ] 在生产克隆上完整演练（含失败回滚路径）
+- [x] 部署编排实现 + 测试
+- [ ] 生产克隆上的完整演练（含失败回滚路径）
 - [ ] live proof JSON（容器 ID/镜像、路由哈希、runtimeHash、resourcesHash、账本）
-- [ ] 独立 workflow 或人工执行入口，且 `authorize_release_sha` 必须等于 release
+- [x] 独立 workflow 入口，且 `authorize_release_sha` 必须等于 release
 
 ## 6. 明确不做的事
 

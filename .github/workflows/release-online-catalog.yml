@@ -13,6 +13,11 @@ on:
         description: 'Exact SHA authorized for this release (must equal github.sha)'
         required: true
         type: string
+      preflight_only:
+        description: 'Stop after the read-only preflight (recommended for the first run)'
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: deploy-bj-online-catalog
@@ -90,6 +95,7 @@ jobs:
             --archive "$RUNNER_TEMP/artifact/image.tar" --ssh-key ~/.ssh/id_ed25519
 
       - name: Blue-green deploy with atomic migration
+        if: ${{ inputs.preflight_only == false }}
         env:
           TRANSFER_CAS_KNOWN_HOSTS: ${{ runner.temp }}/known_hosts
         run: |
