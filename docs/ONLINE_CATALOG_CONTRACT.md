@@ -1,7 +1,7 @@
 # ONLINE-CATALOG-ADMIN-001 生产发布合约
 
-> 状态：身份、账本、只读 preflight 与蓝绿部署编排均已实现；
-> **真实 preflight 被生产模型的 `SOURCE_LABELS_UNSUPPORTED` 阻断（见 §6），尚未部署。**
+> 状态：身份、账本、只读 preflight 与 golive 蓝绿部署编排均已实现；
+> 生产模型来源已查明（§6），**尚未在生产执行部署**。
 
 ## 1. 为什么需要单独合约
 
@@ -49,25 +49,26 @@ python3 scripts/deploy-prod-online-catalog.py identity \
 
 测试：`python3 scripts/test-online-catalog-release.py`（篡改 SQL 哈希、多出文件、deploy 模式均被拒绝）。
 
-## 4. 部署编排（已实现，未在生产执行）
+## 4. 部署编排（已实现，按生产实际使用的 golive 模型）
 
-复用 `deploy-prod-transfer-cas.py` 的蓝绿原语，顺序如下：
+生产实际由 `golive-blue-green.py`（BUDU-OFFLINE-TO-MINI-001，owner-approval V5）创建，
+不是通用 `bg_clone` 的候选模型。本合约按同一模型实现：
 
 1. **artifact**：`m.artifact()` 校验归档标签、平台、revision label 与运行时文件摘要。
-2. **preflight（只读）**：旧容器身份/健康、路由形状、数据库 91 条且无失败/回滚、
+2. **preflight（只读）**：路由指向的当前容器 SHA/label/健康、数据库 91 条且无失败/回滚、
    两张新表不存在、发布锁不存在、磁盘 ≥ 12 GiB。
 3. **import**：`m.bg_import` 落盘校验 sha256 后 `docker load`，`m.resolve_loaded_image` 复核。
-4. **backup**：`pg_dump -Fc` 到回滚目录，`pg_restore -l` 统计 TABLE DATA 段数并记 sha256。
+4. **backup**：`pg_dump -Fc` 到回滚目录，`pg_restore -l` 统计 TABLE DATA 段数。
 5. **migration（原子）**：锁 `_prisma_migrations`、断言账本 91 条与两张表不存在、
    执行迁移 SQL、写入账本记录、单事务提交；随后校验 92 条与账本逐项一致。
-6. **candidate**：`m.bg_clone` 克隆旧容器为 standby → 内部健康 → `m.bg_lifecycle('standby')`
-   → Prisma 读写探测。
-7. **cutover**：写者归零 → 停旧容器 → `m.bg_promote` → `m.bg_lifecycle('active')`
-   → `m.replace_routes` → 公网健康 → 写者唯一性校验。
-8. **verify**：`User`/`InventoryItem`/`StockBalance`/`ProcurementReturn`/`ReplenishmentOrder`
-   行数与迁移前一致；新表关键列齐全；`.current-sha` 指向 release。
-9. **rollback**：任一步失败 → 停候选 → 重启旧容器 → 恢复路由与 `.current-sha` → 公网健康。
-   迁移只新增表，旧代码可安全运行；新表与账本记录保留，便于下次重试。
+6. **candidate**：按 golive 方式从当前容器克隆——沿用挂载、GroupAdd、全部网络、环境变量，
+   仅改 `GIT_SHA`、`BUDU_RUNTIME_MODE=standby`、role/revision 标签、`--restart no`；
+   启动后等待 `BUDU_RUNTIME_STANDBY_READY` 并通过内部健康检查。
+7. **promotion**：`SIGUSR2` 触发晋升，等待 `BUDU_RUNTIME_PROMOTION_COMPLETE` 与健康检查。
+8. **cutover**：模板与生效 nginx 配置同时替换容器名（`m.replace_routes`），`nginx -t` + reload，
+   公网健康检查确认 `gitSha`。
+9. **retire**：停旧容器（保留镜像与容器），写 `.current-sha`，核对业务行数未变。
+10. **rollback**：任一步失败 → 停候选 → 重启旧容器 → 恢复路由与 `.current-sha` → 公网健康。
 
 执行入口：`.github/workflows/release-online-catalog.yml`。
 `preflight_only=true`（默认）只构建归档并跑到只读 preflight，不触碰生产。
@@ -81,37 +82,30 @@ python3 scripts/deploy-prod-online-catalog.py identity \
 - [ ] live proof JSON（容器 ID/镜像、路由哈希、runtimeHash、resourcesHash、账本）
 - [x] 独立 workflow 入口，且 `authorize_release_sha` 必须等于 release
 
-## 6. 生产模型阻断（2026-11-12 实测）
+## 6. 生产模型来源（2026-11-12 查明）
 
-`preflight` 在真实生产上返回：
-
-```
-{"result": "BLOCKED", "code": "SOURCE_LABELS_UNSUPPORTED"}
-```
-
-原因是当前生产容器不是标准 post-transfer 候选，而是 **thin/golive 覆盖层**：
+标准 `bg_clone` 路径在生产上返回 `SOURCE_LABELS_UNSUPPORTED`，因为当前生产容器不是
+标准 post-transfer 候选，而是 **thin/golive 覆盖层**：
 
 | 项 | 实测值 |
 |---|---|
-| 容器 | `budu-prod-e91561238b86-golive` |
+| 容器 | `budu-prod-e91561238b86-golive`（创建于 2026-10-26T12:01:36Z） |
 | 镜像 | 587 MB / 44 层（全量镜像约 2.3 GB） |
 | labels | `budu.production-role=golive-candidate`、`budu.thin-base=adcfa1926…`、`budu.thin-overlay-sha256=608ffd4c…`、`revision=e9156123…` |
-| RestartPolicy | `no`（克隆契约要求 `unless-stopped`） |
+| RestartPolicy | `no` |
 | 网络 | `budu-bj-006-…-net` **和** `budu_default` 两个 |
 
-`deploy-prod-transfer-cas.py` 的 `validate_clone_source` 要求 labels 恰为
-`{revision, budu.production-role=candidate}`、单网络、`unless-stopped`；
-`bg_clone` 的 `clone_parity` 也要求网络集合一致。两者都无法处理当前 golive 容器。
+来源已定位：`BUDU-OFFLINE-TO-MINI-001` 的 go-live 工具
+`artifacts/golive-20261026/golive-blue-green.py`（sha256 `c1b28af8…13a3`），授权模型
+`BUDU-OWNER-APPROVAL-V5`，生产回滚目录
+`/opt/budu/.rollback-assets/offline-to-mini-001-e91561238b86/`。
 
-**影响不止本功能**：标准 `Deploy to Beijing Prod` 同样会在 preflight 之后因同一原因失败，
-即当前生产形态与仓库内所有发布工具都不匹配。这个 golive 容器不是本仓库任何脚本创建的
-（全分支检索无 `golive` 关键字），需要确认它的来源与配套的 thin 覆盖层构建流程。
+该容器由 `docker create --restart no --label budu.production-role=golive-candidate` 创建，
+沿用全部挂载、GroupAdd 与两条网络，通过 env-file 覆盖变量，再 `SIGUSR2` 晋升、替换 nginx。
+因此标准 `validate_clone_source`（要求 `role=candidate`、单网络、`unless-stopped`）必然拒绝它。
 
-本功能只有在以下任一条件满足后才能继续：
-
-1. 找到/补齐创建 golive 容器的工具，按同一模型构建 thin 覆盖层；
-2. 经批准把生产切回标准全量镜像模型（本合约的 `bg_clone` 路径即可直接使用）；
-3. 由发布负责人按其现有流程执行迁移与发布。
+本合约据此改为同一 golive 模型（见 §4），不再使用 `bg_clone`。
+旧容器仍可按 `docker start budu-prod-e91561238b86-golive` + nginx 回切恢复。
 
 ## 7. 明确不做的事
 

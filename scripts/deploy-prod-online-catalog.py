@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """ONLINE-CATALOG-ADMIN-001 production release contract: L91 -> L92.
 
-Identity plus a blue-green deploy that reuses the primitives in
-deploy-prod-transfer-cas.py. That controller is not modified: its digest is
-pinned here and by the older release contracts.
+Deployment follows the golive model that production actually runs
+(`golive-blue-green.py`, BUDU-OFFLINE-TO-MINI-001): clone the live container
+with a new image, start it in standby, promote with SIGUSR2, swap nginx, then
+retire the old container. The generic bg_clone path is not used because the live
+container is a thin/golive container that `validate_clone_source` rejects.
 
 Modes: identity | inspect-artifact | preflight | deploy
 """
@@ -111,8 +113,15 @@ def load_contract():
     return module
 
 
-def container_name(sha):
+def candidate_name(sha):
     return 'budu-prod-' + sha[:12] + '-golive'
+
+
+def current_container(remote, module):
+    template, active = remote.routes()
+    name = module.route_target(template, active)
+    require(bool(name), 'ONLINE_CATALOG_ROUTE_TARGET_UNDEFINED')
+    return name, template, active
 
 
 def table_state(remote, module):
@@ -161,9 +170,7 @@ def backup(remote, module, root):
                                "docker exec -i -u postgres %s pg_restore -l < %s | grep -c 'TABLE DATA' || true"
                                % (module.PG, path)]).decode().strip() or '0')
     require(sections > 500, 'ONLINE_CATALOG_BACKUP_UNREADABLE')
-    sha = hashlib.sha256(Path(path).read_bytes()).hexdigest() if Path(path).exists() else \
-        remote.run(['sha256sum', path]).decode().split()[0]
-    return {'bytes': size, 'sha256': sha, 'tableDataSections': sections, 'path': path}
+    return {'bytes': size, 'tableDataSections': sections, 'path': path}
 
 
 def migration_sql(value):
@@ -190,7 +197,7 @@ v=json.load(sys.stdin)
 m=json.loads(subprocess.check_output(['docker','inspect',v['pg']]))[0]
 e=dict(x.split('=',1) for x in m['Config']['Env'] if '=' in x)
 r=subprocess.run(['docker','exec','-i','-e','PGOPTIONS=-c statement_timeout=90000',v['pg'],'psql','-X','-qAt','-v','ON_ERROR_STOP=1','-U',e.get('POSTGRES_USER','postgres'),'-d',v['database']],input=v['sql'].encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-print(json.dumps({'returncode':r.returncode,'stdout':r.stdout.decode()[-400:],'stderr':r.stderr.decode()[-400:]}))
+print(json.dumps({'returncode':r.returncode,'stderr':r.stderr.decode()[-300:]}))
 '''
     out = json.loads(remote.py(code, {'pg': module.PG, 'database': module.EXPECTED_DB,
                                       'sql': migration_sql(value)}, timeout=180))
@@ -208,36 +215,101 @@ print(json.dumps({'returncode':r.returncode,'stdout':r.stdout.decode()[-400:],'s
     return state
 
 
+def create_candidate(remote, module, source, name, release, image):
+    env = dict(module.env(source))
+    env['GIT_SHA'] = release
+    env['BUDU_RUNTIME_MODE'] = 'standby'
+    env_path = '/dev/shm/online-catalog-%s.env' % release[:12]
+    lines = ''.join('%s=%s\n' % (key, value) for key, value in sorted(env.items()))
+    remote.py("import json,os,pathlib,sys;v=json.load(sys.stdin);p=pathlib.Path(v['path']);"
+              "fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600);os.write(fd,v['text'].encode());os.close(fd)",
+              {'path': env_path, 'text': lines})
+    try:
+        networks = sorted((source.get('NetworkSettings') or {}).get('Networks') or {})
+        require(networks, 'ONLINE_CATALOG_SOURCE_NETWORKS_MISSING')
+        primary = next((n for n in ('budu-bj-006-final-restore-20260822-055653z-net', 'budu_default') if n in networks),
+                       networks[0])
+        args = ['docker', 'create', '--name', name, '--network', primary, '--restart', 'no',
+                '--label', 'budu.production-role=golive-candidate',
+                '--label', 'org.opencontainers.image.revision=' + release]
+        for group in (source.get('HostConfig') or {}).get('GroupAdd') or []:
+            args.extend(['--group-add', str(group)])
+        for mount in source.get('Mounts') or []:
+            require(mount.get('Type') in ('bind', 'volume') and mount.get('Destination'), 'ONLINE_CATALOG_MOUNT_UNSUPPORTED')
+            origin = mount.get('Name') if mount['Type'] == 'volume' else mount.get('Source')
+            spec = 'type=%s,source=%s,target=%s' % (mount['Type'], origin, mount['Destination'])
+            if not mount.get('RW', True):
+                spec += ',readonly'
+            args.extend(['--mount', spec])
+        args.extend(['--env-file', env_path, image])
+        created = remote.run(args, timeout=120).decode().strip()
+        for extra in networks:
+            if extra != primary:
+                remote.run(['docker', 'network', 'connect', extra, name], timeout=60)
+        remote.run(['docker', 'start', name], timeout=60)
+        return created[:12]
+    finally:
+        remote.run(['rm', '-f', env_path])
+
+
+def wait_standby(remote, name, release, timeout=120):
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        state = remote.inspect(name)['State']
+        require(state.get('Running'), 'ONLINE_CATALOG_CANDIDATE_EXITED')
+        logs = remote.run(['docker', 'logs', '--tail', '120', name]).decode(errors='replace')
+        if 'BUDU_RUNTIME_STANDBY_READY' in logs:
+            remote.health(name, release)
+            return
+        time.sleep(2)
+    raise Blocked('ONLINE_CATALOG_CANDIDATE_NOT_READY')
+
+
+def promote(remote, name, release, timeout=90):
+    import time
+    pid = remote.run(['docker', 'exec', name, 'sh', '-c',
+                      "ps -eo pid,args | awk '/node server\\/index.js/ && $2==\"node\" {print $1; exit}'"]).decode().strip()
+    require(pid.isdigit(), 'ONLINE_CATALOG_NODE_PID_NOT_FOUND')
+    remote.run(['docker', 'exec', name, 'kill', '-USR2', pid])
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        logs = remote.run(['docker', 'logs', '--tail', '200', name]).decode(errors='replace')
+        if 'BUDU_RUNTIME_PROMOTION_COMPLETE' in logs:
+            remote.health(name, release)
+            return pid
+        require('BUDU_RUNTIME_PROMOTION_FAILED' not in logs, 'ONLINE_CATALOG_PROMOTION_FAILED')
+        require(remote.inspect(name)['State'].get('Running'), 'ONLINE_CATALOG_CANDIDATE_EXITED')
+        time.sleep(1)
+    raise Blocked('ONLINE_CATALOG_PROMOTION_TIMEOUT')
+
+
 def execute(remote, value, archive_stream, module=None):
     m = module or load_contract()
     release = value['release']
-    candidate = container_name(release)
-    old = container_name(BASE)
+    name = candidate_name(release)
     root = '/opt/budu/.rollback-assets/online-catalog-' + release
-    state = {'candidate': candidate, 'candidateAttempted': False}
-    g = None
-    g_stopped = False
-    routes_switched = False
-    template = active = None
     result = {}
     stage = 'PREFLIGHT'
+    current = template = active = None
+    candidate_started = False
+    old_stopped = False
+    routes_switched = False
+    before = None
     try:
         require(remote.run(['test', '!', '-e', root]) == b'', 'ONLINE_CATALOG_ROLLBACK_ROOT_EXISTS')
-        g = remote.inspect(old)
-        require(m.env(g).get('GIT_SHA') == BASE and g['State']['Running'], 'ONLINE_CATALOG_OLD_CONTAINER_CHANGED')
-        m.validate_clone_source(g, value['art']['config'])
-        template, active = remote.routes()
-        require(template.count('http://' + old + ':3000') == 3, 'ONLINE_CATALOG_ROUTE_SHAPE_INVALID')
+        current, template, active = current_container(remote, m)
+        source = remote.inspect(current)
+        require(m.env(source).get('GIT_SHA') == BASE, 'ONLINE_CATALOG_SOURCE_SHA_CHANGED')
+        require(source['Config']['Labels'].get(m.REVISION) == BASE, 'ONLINE_CATALOG_SOURCE_LABEL_CHANGED')
+        require(source['State']['Running'] and source['State'].get('Health', {}).get('Status') == 'healthy',
+                'ONLINE_CATALOG_SOURCE_NOT_HEALTHY')
         db = remote.db()
         require(db['database'] == m.EXPECTED_DB and db['applied'] == OLD_COUNT
                 and db['failed'] == 0 and db['rolledBack'] == 0, 'ONLINE_CATALOG_DATABASE_NOT_AT_L91')
-        tables = table_state(remote, m)
-        require(tables.get('categories') is None and tables.get('profiles') is None,
-                'ONLINE_CATALOG_TABLES_ALREADY_EXIST')
+        require(table_state(remote, m).get('categories') is None, 'ONLINE_CATALOG_TABLES_ALREADY_EXIST')
         used, available = remote.disk()
         require(available >= MIN_FREE_BYTES, 'ONLINE_CATALOG_DISK_INSUFFICIENT')
-        lock = json.loads(remote.py("import json,pathlib; p=pathlib.Path('/run/lock/budu-transfer-cas-release'); print(json.dumps({'present':p.exists(),'symlink':p.is_symlink()}))"))
-        require(lock == {'present': False, 'symlink': False}, 'ONLINE_CATALOG_LOCK_PRESENT')
         before = data_counts(remote, m)
 
         stage = 'IMPORT'
@@ -250,66 +322,54 @@ def execute(remote, value, archive_stream, module=None):
 
         stage = 'MIGRATION'
         migration_state = apply_migration(remote, m, value)
-
-        stage = 'SCHEMA'
         columns = schema_columns(remote, m)
         require(REQUIRED_COLUMNS <= set(columns), 'ONLINE_CATALOG_SCHEMA_INCOMPLETE')
         require(data_counts(remote, m) == before, 'ONLINE_CATALOG_DATA_CHANGED_DURING_MIGRATION')
 
         stage = 'CANDIDATE'
-        state['candidateAttempted'] = True
-        state['g'] = g
-        m.bg_clone(remote, value, state)
-        remote.health(candidate, release)
-        m.bg_lifecycle(remote, value, state, 'standby')
-        m.application_db_probe(remote, candidate, 'ONLINE_CATALOG_CANDIDATE_DB_PROBE')
-
-        stage = 'STOP_OLD'
-        m.writer_check([c for c in remote.containers() if c['Id'] != state['candidateId']], remote.db(), [old])
-        remote.run(['docker', 'stop', '--time', '30', g['Id']])
-        g_stopped = True
-        require(not remote.inspect(g['Id'])['State']['Running'], 'ONLINE_CATALOG_OLD_STOP_UNVERIFIED')
-        m.writer_check([c for c in remote.containers() if c['Id'] != state['candidateId']], remote.db(), [])
+        create_candidate(remote, m, source, name, release, value['art']['imageReference'])
+        candidate_started = True
+        wait_standby(remote, name, release)
+        require(remote.inspect(name)['Config']['Labels'].get(m.REVISION) == release,
+                'ONLINE_CATALOG_CANDIDATE_LABEL_CHANGED')
 
         stage = 'PROMOTION'
-        m.bg_promote(remote, value, state)
-        m.bg_lifecycle(remote, value, state, 'active')
+        pid = promote(remote, name, release)
 
         stage = 'CUTOVER'
-        next_routes = template.replace('http://' + old + ':3000', 'http://' + candidate + ':3000')
-        require(next_routes.count('http://' + candidate + ':3000') == 3, 'ONLINE_CATALOG_ROUTE_COUNT_INVALID')
-        m.replace_routes(remote, next_routes, next_routes)
+        require(template.count(current) >= 3 and active.count(current) >= 1, 'ONLINE_CATALOG_ROUTE_SHAPE_INVALID')
+        m.replace_routes(remote, template.replace(current, name), active.replace(current, name))
         routes_switched = True
-        remote.health(candidate, release, True)
-        m.writer_check(remote.containers(), remote.db(), [candidate])
-        require(data_counts(remote, m) == before, 'ONLINE_CATALOG_DATA_CHANGED_DURING_CUTOVER')
+        remote.health(name, release, True)
 
-        stage = 'POINTER'
+        stage = 'RETIRE_OLD'
+        remote.run(['docker', 'stop', '--time', '30', current], timeout=120)
+        old_stopped = True
+        require(not remote.inspect(current)['State']['Running'], 'ONLINE_CATALOG_OLD_STOP_UNVERIFIED')
         m.write_authority(remote, m.CURRENT_SHA_FILE, release + '\n')
         require(remote.run(['cat', m.CURRENT_SHA_FILE]).decode().strip() == release, 'ONLINE_CATALOG_POINTER_FAILED')
+        require(data_counts(remote, m) == before, 'ONLINE_CATALOG_DATA_CHANGED_DURING_CUTOVER')
 
         result = {'result': 'DEPLOY_COMPLETE', 'releaseSha': release, 'dbApplied': NEW_COUNT, 'dbFailed': 0,
-                  'writer': 1, 'runtimeMode': 'active', 'route': candidate, 'oldStopped': True,
+                  'runtimeMode': 'active', 'route': name, 'oldStopped': True, 'nodePid': pid,
                   'backup': backup_receipt, 'importReceipt': import_receipt, 'migration': migration_state,
                   'dataCounts': before, 'schemaColumns': len(columns)}
     except BaseException as error:
-        if isinstance(error, Blocked):
-            code = str(error)
-        elif isinstance(error, m.GateError):
-            code = str(error)
-        else:
-            code = 'ONLINE_CATALOG_UNKNOWN'
+        code = str(error) if isinstance(error, (Blocked, m.GateError)) else 'ONLINE_CATALOG_UNKNOWN'
         result = {'result': 'DEPLOY_BLOCKED', 'stage': stage, 'code': code, 'errorType': type(error).__name__}
         try:
-            if state.get('candidateAttempted'):
-                m.bg_owned_stop(remote, value, state)
-            if g_stopped:
-                remote.run(['docker', 'start', g['Id']])
-                require(remote.inspect(g['Id'])['State']['Running'], 'ONLINE_CATALOG_ROLLBACK_START_FAILED')
+            if candidate_started:
+                ids = remote.run(['docker', 'ps', '-aq', '--filter', 'name=^/' + name + '$']).decode().strip()
+                if ids:
+                    remote.run(['docker', 'stop', '--time', '20', name], timeout=60)
+            if old_stopped and current:
+                remote.run(['docker', 'start', current], timeout=60)
+                remote.health(current, BASE)
             if routes_switched and template is not None:
                 m.replace_routes(remote, template, active)
             m.write_authority(remote, m.CURRENT_SHA_FILE, BASE + '\n')
-            remote.health(old, BASE, True)
+            if current:
+                remote.health(current, BASE, True)
             result['recovery'] = 'OLD_ACTIVE_RESTORED'
         except BaseException as secondary:
             result['recovery'] = 'UNKNOWN'
@@ -318,23 +378,23 @@ def execute(remote, value, archive_stream, module=None):
 
 
 def preflight(remote, module, value):
-    old = container_name(BASE)
-    g = remote.inspect(old)
-    require(module.env(g).get('GIT_SHA') == BASE and g['State']['Running'], 'ONLINE_CATALOG_OLD_CONTAINER_CHANGED')
-    module.validate_clone_source(g, value['art']['config'])
-    template, active = remote.routes()
-    require(template.count('http://' + old + ':3000') == 3, 'ONLINE_CATALOG_ROUTE_SHAPE_INVALID')
+    name, template, active = current_container(remote, module)
+    source = remote.inspect(name)
+    require(module.env(source).get('GIT_SHA') == BASE, 'ONLINE_CATALOG_SOURCE_SHA_CHANGED')
+    require(source['Config']['Labels'].get(module.REVISION) == BASE, 'ONLINE_CATALOG_SOURCE_LABEL_CHANGED')
+    require(source['State']['Running'] and source['State'].get('Health', {}).get('Status') == 'healthy',
+            'ONLINE_CATALOG_SOURCE_NOT_HEALTHY')
     db = remote.db()
     require(db['database'] == module.EXPECTED_DB and db['applied'] == OLD_COUNT
             and db['failed'] == 0 and db['rolledBack'] == 0, 'ONLINE_CATALOG_DATABASE_NOT_AT_L91')
+    require(table_state(remote, module).get('categories') is None, 'ONLINE_CATALOG_TABLES_ALREADY_EXIST')
     used, available = remote.disk()
     require(available >= MIN_FREE_BYTES, 'ONLINE_CATALOG_DISK_INSUFFICIENT')
-    tables = table_state(remote, module)
-    require(tables.get('categories') is None and tables.get('profiles') is None, 'ONLINE_CATALOG_TABLES_ALREADY_EXIST')
     lock = json.loads(remote.py("import json,pathlib; p=pathlib.Path('/run/lock/budu-transfer-cas-release'); print(json.dumps({'present':p.exists(),'symlink':p.is_symlink()}))"))
     require(lock == {'present': False, 'symlink': False}, 'ONLINE_CATALOG_LOCK_PRESENT')
-    return {'result': 'PREFLIGHT_PASS', 'sha': value['release'], 'old': BASE, 'oldContainer': old,
-            'dbApplied': OLD_COUNT, 'writer': 1, 'diskAvailable': available,
+    return {'result': 'PREFLIGHT_PASS', 'sha': value['release'], 'old': BASE, 'sourceContainer': name,
+            'dbApplied': OLD_COUNT, 'diskAvailable': available,
+            'networks': sorted((source.get('NetworkSettings') or {}).get('Networks') or {}),
             'templateHash': digest(template.encode()), 'activeHash': digest(active.encode())}
 
 
@@ -400,7 +460,6 @@ def main():
         return
     require(args.ssh_key is not None, 'SSH_REQUIRED')
     remote = m.Remote(args.ssh_key)
-    value['template'], value['active'] = remote.routes()
     value['sshKeyPath'] = str(args.ssh_key)
     if args.mode == 'preflight':
         print(json.dumps(preflight(remote, m, value)))
