@@ -364,7 +364,7 @@ def bootstrap_source():
               "from pathlib import Path\n")
     return prefix + "m=types.ModuleType('guarded');exec(compile(" + repr(base) + ",'<guarded>','exec'),m.__dict__)\n" + body + \
         ("\nv=json.loads(sys.stdin.buffer.readline())\n"
-         "m.configure_profile('post-transfer',BASE,BUSINESS,v['art']['runtimeHash'])\n"
+         "m.configure_profile('post-transfer',BASE,BUSINESS,v['oldV2Hash'])\n"
          "def interrupted(*_):raise Blocked('ONLINE_CATALOG_INTERRUPTED')\n"
          "for sig in (signal.SIGHUP,signal.SIGTERM,signal.SIGINT):signal.signal(sig,interrupted)\n"
          "with open(v['archivePath'],'rb') as archive:\n"
@@ -387,9 +387,12 @@ def main():
         return
     require(args.archive is not None, 'ARCHIVE_REQUIRED')
     m = load_contract()
+    old_v2 = digest(subprocess.check_output(['git', '-C', str(args.repo), 'show', f'{BASE}:server/v2.js']))
+    m.configure_profile('post-transfer', BASE, BUSINESS, old_v2)
     art = m.artifact(args.archive, args.release_sha, args.repo)
     value.update({'art': art, 'sql': (args.repo / 'prisma/migrations' / MIGRATION / 'migration.sql').read_text(),
                   'oldLedger': ledger(args.repo, BASE), 'ledger': ledger(args.repo),
+                  'oldV2Hash': old_v2,
                   'helper': (args.repo / 'scripts/clone-production-container.py').read_text()})
     if args.mode == 'inspect-artifact':
         print(json.dumps({'result': 'ARTIFACT_IDENTITY_PASS', 'archiveSha256': art['archiveHash'],
