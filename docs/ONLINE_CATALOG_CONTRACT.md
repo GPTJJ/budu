@@ -73,6 +73,11 @@ python3 scripts/deploy-prod-online-catalog.py identity \
 执行入口：`.github/workflows/release-online-catalog.yml`。
 `preflight_only=true`（默认）只构建归档并跑到只读 preflight，不触碰生产。
 
+**实测（run `43213975231`，2026-11-12）**：identity、amd64 构建、归档校验、SSH、
+只读 preflight 全部 PASS。preflight 读到：源容器 `budu-prod-e91561238b86-golive` 健康、
+`GIT_SHA=e9156123`、账本 91 条无失败/回滚、两张新表不存在、磁盘 ≥ 12 GiB。
+部署步骤未执行。
+
 ## 5. 发布前必须补齐
 
 - [ ] CloudBase 凭据（`TCB_ENV_ID / TCB_SECRET_ID / TCB_SECRET_KEY`）配置到生产 OS 容器
