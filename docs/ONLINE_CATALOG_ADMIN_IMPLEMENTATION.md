@@ -1,7 +1,8 @@
 # ONLINE-CATALOG-ADMIN-001 实现说明
 
 日期：2026-11-12
-分支：`codex/online-catalog-admin-001`（基于生产基线 `e747fbd`）
+分支：`codex/online-catalog-admin-002`（基于当前生产基线 `e9156123`，V2.20）
+旧分支：`codex/online-catalog-admin-001` 基于 `e747fbd`，**已过期，不得部署**（会回滚 `e9156123` 之后的 16 个提交）。
 状态：候选实现，未部署、未执行生产迁移、未写生产 CloudBase
 
 ## 1. 目标与架构
@@ -143,9 +144,11 @@ OS 管理页 /online-catalog
 - `prisma migrate diff --from-empty --to-schema-datamodel`：新表 SQL 与手写迁移逐项一致（表、索引、外键）。
 - `node --test scripts/test-online-catalog-admin.mjs`：10/10 PASS。
 - `npm run build`：PASS，生成 `OnlineCatalogPage-*.js`。
-- 临时 PostgreSQL 16 实例（端口 55432，非生产）：`prisma migrate deploy` 全部迁移 PASS；`online_categories` / `online_product_profiles` 建表、唯一索引、外键均通过；重复 `mp_id`、缺失 `InventoryItem`、删除有档案的分类均按预期拒绝。
+- 临时 PostgreSQL 16 实例（端口 55433，非生产，基于 `e9156123`）：`prisma migrate deploy` 全部迁移 PASS（含 `procurement_return`、`offline_store_services` 和本次 `online_catalog_admin`）；`online_categories` / `online_product_profiles` 建表、唯一索引、外键均通过；重复 `mp_id`、缺失 `InventoryItem`、删除有档案的分类均按预期拒绝。
 - 真实 Prisma 查询：分类/商品/策略创建、`inventoryItem.is` 关系过滤、`onlineProfile.is null` 过滤、`version increment`、policy upsert/updateMany、P2002/P2003 均 PASS。
 - `node scripts/test-online-catalog-api-native.mjs`：真实 HTTP 路由测试 PASS（建分类 → 建 OS 商品+线上档案+policy → 线上价 1300/POS 价 1250 → 列表 → 状态接口 → 发布预览 → 改价 1400/下架 → policy 自动禁用 → 已建档商品不再出现在可选列表 → 重复建档 409）。
+- Rebase 到 `e9156123` 后重新执行：单元 10/10、原生 API、`npm run build`、`prisma validate` 全部 PASS。
+- **TEST 部署尝试（run 43185608600）**：在 “Configure SSH” 步骤失败（`ssh-keyscan` 退出 1），未执行 checkout 后的任何部署、构建或迁移；原因指向 TEST 主机不可达或 `HK_*`/`TENCENT_*` 主机密钥失效。
 - 未执行：真实 CloudBase 发布、浏览器端到端点击。CloudBase 凭据未配置；发布器只用 fake app 做了单元测试。
 
 ## 9. 回滚
