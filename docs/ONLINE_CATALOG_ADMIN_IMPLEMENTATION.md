@@ -157,6 +157,15 @@ OS 管理页 /online-catalog
   2. `getOnlineCatalogPublisher()` 两处漏 `await`，未配置凭据时点击“发布”或“导入现有”会以未处理 Promise 拒绝**打崩整个 OS 进程**。
 - 未执行：真实 CloudBase 发布（凭据未配置；发布器只用 fake app 做了单元测试）。原香港 TEST 环境已停用，没有可用的测试服务器。
 
+### 北京 staging 验证（2026-11-12）
+
+已在生产机上另起隔离 staging（`/opt/budu-staging`，仅 `127.0.0.1:3100`，独立库与独立卷），详见 `docs/STAGING_BEIJING.md`。
+
+- 空库：92 个迁移全部应用，`online_categories` / `online_product_profiles` 存在。
+- **生产数据副本演练**：从生产库 `pg_dump`（72MB）恢复到临时库后应用本迁移，`_prisma_migrations` 91→92，`User` 109、`InventoryItem` 229、`StockBalance` 6、`ProcurementReturn` 2、`ReplenishmentOrder` 21 全部不变；演练库已删除。
+- **真实浏览器 E2E（staging）**：11 项断言全部通过，与本地结果一致。
+- staging 首次构建暴露了 `package-lock.json` 未同步 `@cloudbase/node-sdk` 的问题（`npm ci` 会失败），已在 `383ea8b` 修复；同时确认 staging 增量镜像必须显式执行 `prisma generate`。
+
 ## 9. 回滚
 
 - 页面/接口：移除 `src/App.jsx` 的 `/online-catalog` 路由或撤下路由挂载即可停止使用；两张表可保留，不影响现有业务。
