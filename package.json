@@ -26,6 +26,7 @@
     "test:pos-daily": "node --test scripts/test-pos-daily.mjs",
     "test:product-excel": "node --test scripts/test-product-excel.mjs",
     "test:online-catalog": "node --test scripts/test-online-catalog-admin.mjs",
+    "test:online-catalog:pg": "node scripts/test-online-catalog-api-native.mjs",
     "test:employee-excel": "node --test scripts/test-employee-pay-excel.mjs",
     "test:daily-pay-adjustment": "node --test scripts/test-daily-pay-adjustment.mjs",
     "test:permissions": "node --test scripts/test-account-permissions.mjs",
