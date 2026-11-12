@@ -82,6 +82,14 @@ jobs:
           python3 scripts/deploy-prod-online-catalog.py inspect-artifact \
             --repo "$PWD" --release-sha "$GITHUB_SHA" --archive "$RUNNER_TEMP/artifact/image.tar"
 
+      - name: Upload exact archive for operator-driven deploy
+        uses: actions/upload-artifact@v4
+        with:
+          name: online-catalog-image-${{ github.sha }}
+          path: ${{ runner.temp }}/artifact/image.tar
+          retention-days: 1
+          compression-level: 0
+
       - name: Configure SSH
         env:
           SSH_KEY: ${{ secrets.BJ_SSH_KEY }}
