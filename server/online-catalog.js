@@ -419,18 +419,21 @@ onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
   // 净成交：已支付且未整单退款
   const settledWhere = (from) => ({ paidAt: { gte: from }, status: { not: 'REFUNDED' } })
 
-  const [productTotal, productOn, productDraft, productFailed, last7, today, paidTotal, shipped, refundPending, refundTotal] = await Promise.all([
+  const [productTotal, productOn, productDraft, productFailed, last7, today, refundPending, refundTotal, paidRows, shippedRows] = await Promise.all([
     prisma.onlineProductProfile.count(),
     prisma.onlineProductProfile.count({ where: { status: 'ON' } }),
     prisma.onlineProductProfile.count({ where: { status: 'DRAFT' } }),
     prisma.onlineProductProfile.count({ where: { publishState: 'FAILED' } }),
     prisma.onlineSettlement.aggregate({ where: settledWhere(since), _count: { _all: true }, _sum: { totalCents: true } }),
     prisma.onlineSettlement.aggregate({ where: settledWhere(todayStart), _count: { _all: true }, _sum: { totalCents: true } }),
-    prisma.onlineSettlement.count({ where: { paidAt: { not: null } } }),
-    prisma.onlineFulfillmentAuthorization.count(),
     prisma.onlineRefund.count({ where: { status: 'PENDING' } }),
     prisma.onlineRefund.count(),
+    // 只有「已支付且未整单退款」的订单才可能待发货
+    prisma.onlineSettlement.findMany({ where: { paidAt: { not: null }, status: { not: 'REFUNDED' } }, select: { id: true } }),
+    prisma.onlineFulfillmentAuthorization.findMany({ select: { settlementId: true } }),
   ])
+  const shippedIds = new Set(shippedRows.map((row) => row.settlementId))
+  const pendingFulfillment = paidRows.filter((row) => !shippedIds.has(row.id)).length
 
   res.json({
     ok: true,
@@ -442,7 +445,7 @@ onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
       today: today._count._all,
       todayCents: Number(today._sum.totalCents || 0),
     },
-    fulfillment: { paid: paidTotal, shipped, pending: Math.max(0, paidTotal - shipped) },
+    fulfillment: { paid: paidRows.length, shipped: shippedIds.size, pending: pendingFulfillment },
     refunds: { pending: refundPending, total: refundTotal },
   })
 }))
