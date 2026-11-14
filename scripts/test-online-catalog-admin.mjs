@@ -4,6 +4,7 @@ import { buildProductDoc, createOnlineCatalogPublisher, checksum } from '../serv
 import { assertComboFlavors, assertComboOnShelf, comboSkus, findImportItem, normalizeComboInput, normalizeMedia, onlineSkuId, productProfileData, syncComboPolicies } from '../server/online-catalog.js'
 import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
 import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
+import { bannerData, bannerChecksum, serializeBanner } from '../server/online-catalog.js'
 
 const category = { name: '生巧克力', meta: { color: '#A13966', sub: '手工生巧' } }
 const item = { name: '新商品', unit: '盒', spec: '100g/盒', salePriceCents: 13800n }
@@ -410,4 +411,63 @@ test('assertComboOnShelf 非组合商品直接放行且不读目录', async () =
 test('assertComboOnShelf 口味档案本身已下架时先被 DB 校验拦下', async () => {
   const rows = ON_ROWS.map((row) => (row.mpId === 'b6' ? { ...row, status: 'OFF' } : row))
   await assert.rejects(() => assertComboOnShelf({ mpId: 'bb', combo: BB_COMBO }, { client: shelfClient(rows), docs: [] }), /未上架：b6/)
+})
+
+// ---- 首页轮播（营销） ----
+
+const BANNER_BASE = {
+  image: 'cloud://env.bucket/online-catalog/media/202611/a.jpg',
+  title: '92% 生巧克力',
+  linkType: 'product',
+  linkValue: 'c1',
+  sortOrder: 1,
+  enabled: true,
+}
+
+test('bannerData normalizes a full banner and trims optional copy', () => {
+  const data = bannerData({ ...BANNER_BASE, en: '  NAMA  ', subtitle: '  高可可 ', ctaText: '查看详情' })
+  assert.equal(data.en, 'NAMA')
+  assert.equal(data.subtitle, '高可可')
+  assert.equal(data.linkType, 'product')
+  assert.equal(data.linkValue, 'c1')
+  assert.equal(data.enabled, true)
+})
+
+test('bannerData rejects non-upload images and unsafe links', () => {
+  assert.throws(() => bannerData({ ...BANNER_BASE, image: '' }), /请上传轮播图/)
+  assert.throws(() => bannerData({ ...BANNER_BASE, image: 'http://insecure/a.jpg' }), /云存储文件或 https/)
+  assert.throws(() => bannerData({ ...BANNER_BASE, image: '/images/a.jpg' }), /云存储文件或 https/)
+  assert.throws(() => bannerData({ ...BANNER_BASE, linkType: 'page', linkValue: 'pages/home' }), /\/pages\//)
+  assert.throws(() => bannerData({ ...BANNER_BASE, linkType: 'product', linkValue: '../etc' }), /小程序商品 ID/)
+  assert.throws(() => bannerData({ ...BANNER_BASE, linkType: 'shop', linkValue: 'c1' }), /不需要填写目标值/)
+  assert.throws(() => bannerData({ ...BANNER_BASE, linkType: 'unknown' }), /跳转类型不正确/)
+  assert.throws(() => bannerData({ ...BANNER_BASE, title: '' }), /请填写标题/)
+})
+
+test('bannerData keeps stored values on a partial update (enable toggle)', () => {
+  const existing = {
+    image: 'cloud://env.bucket/a.jpg', mobileImage: '', title: '旧标题', en: '', subtitle: '',
+    dateText: '', ctaText: '', linkType: 'product', linkValue: 'c1', sortOrder: 3, enabled: true,
+  }
+  const data = bannerData({ enabled: false }, { existing })
+  assert.equal(data.enabled, false)
+  assert.equal(data.title, '旧标题')
+  assert.equal(data.linkValue, 'c1')
+  assert.equal(data.sortOrder, 3)
+})
+
+test('bannerChecksum ignores disabled entries so toggling one back does not look dirty', () => {
+  const on = { ...BANNER_BASE, image: 'https://cdn/a.jpg' }
+  const off = { ...BANNER_BASE, image: 'https://cdn/b.jpg', enabled: false }
+  assert.equal(bannerChecksum([on, off]), bannerChecksum([on]))
+  assert.notEqual(bannerChecksum([on]), bannerChecksum([{ ...on, title: 'changed' }]))
+})
+
+test('serializeBanner exposes camelCase fields with safe defaults', () => {
+  const out = serializeBanner({ id: 'bn-1', image: 'https://cdn/a.jpg', title: 'T', sortOrder: 2, enabled: true })
+  assert.equal(out.id, 'bn-1')
+  assert.equal(out.linkType, 'none')
+  assert.equal(out.linkValue, '')
+  assert.equal(out.mobileImage, '')
+  assert.equal(out.enabled, true)
 })

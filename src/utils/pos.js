@@ -120,7 +120,7 @@ export function createCheckoutKey() {
   return `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-export async function compressProductImage(file) {
+export async function compressProductImage(file, { maxSide: sideLimit = 900, maxBytes = 580000 } = {}) {
   if (!file?.type?.startsWith('image/')) throw new Error('请选择图片文件')
   const dataUrl = await new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -134,7 +134,7 @@ export async function compressProductImage(file) {
     element.onerror = () => reject(new Error('图片格式不支持'))
     element.src = dataUrl
   })
-  const maxSide = 900
+  const maxSide = sideLimit
   const ratio = Math.min(1, maxSide / Math.max(image.width, image.height))
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.round(image.width * ratio))
@@ -142,10 +142,10 @@ export async function compressProductImage(file) {
   canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height)
   let quality = 0.84
   let output = canvas.toDataURL('image/jpeg', quality)
-  while (output.length > 580000 && quality > 0.42) {
+  while (output.length > maxBytes && quality > 0.42) {
     quality -= 0.08
     output = canvas.toDataURL('image/jpeg', quality)
   }
-  if (output.length > 600000) throw new Error('图片压缩后仍过大，请选择尺寸更小的图片')
+  if (output.length > maxBytes + 20000) throw new Error('图片压缩后仍过大，请选择尺寸更小的图片')
   return output
 }

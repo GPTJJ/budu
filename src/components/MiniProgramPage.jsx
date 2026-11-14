@@ -17,6 +17,7 @@ import OnlineCatalogPage from './OnlineCatalogPage'
 import OnlineOrderBoard from './OnlineOrderBoard'
 import AfterSalesBoard from './AfterSalesBoard'
 import AnalyticsBoard from './AnalyticsBoard'
+import BannerBoard from './BannerBoard'
 
 /**
  * 小程序管理台外壳（BUDU-MP-CONSOLE-001 / P0）
@@ -84,7 +85,7 @@ const MODULES = [
     key: 'marketing',
     label: '营销',
     icon: Megaphone,
-    desc: '首屏内容与活动位',
+    desc: '首页轮播：改图、改文案、调顺序，发布后覆盖小程序首屏',
     views: [
       { key: 'marketing-banner', label: '首页轮播' },
       { key: 'marketing-campaign', label: '优惠活动' },
@@ -356,9 +357,12 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
           ) : null}
           {moduleKey === 'after-sales' ? <AfterSalesBoard key={viewKey} initialState={view.state || ''} /> : null}
           {moduleKey === 'data' && viewKey === 'data-trade' ? <AnalyticsBoard key={viewKey} /> : null}
+          {moduleKey === 'marketing' && viewKey === 'marketing-banner' ? <BannerBoard key={viewKey} /> : null}
           {moduleKey === 'shipments' && view.state === 'ISSUE' ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
           {moduleKey !== 'overview' && moduleKey !== 'orders' && moduleKey !== 'shipments' && moduleKey !== 'after-sales'
-            && !(moduleKey === 'data' && viewKey === 'data-trade') && viewKey !== 'products'
+            && !(moduleKey === 'data' && viewKey === 'data-trade')
+            && !(moduleKey === 'marketing' && viewKey === 'marketing-banner')
+            && viewKey !== 'products'
             ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
         </div>
       </main>

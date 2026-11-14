@@ -14,12 +14,13 @@ import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { httpError, parseCents } from './pos-core.js'
 import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
-import { getOnlineCatalogPublisher, buildProductDoc } from './online-catalog-publisher.js'
+import { getOnlineCatalogPublisher, buildProductDoc, checksum } from './online-catalog-publisher.js'
 import { enumerateOnlineSkus } from './online-catalog-coverage.js'
 import { createOnlineFulfillment } from './online-fulfillment.js'
 import { registerWechatShipping } from './online-console-bridge.js'
 import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls } from './online-catalog-media.js'
 import { uploadCatalogImage } from './online-catalog-upload.js'
+import { DEFAULT_BANNERS } from './online-banner-defaults.js'
 
 export const ONLINE_CATALOG_NAMESPACE = 'cloudbase-miniprogram'
 export const ONLINE_CATALOG_STATUSES = ['DRAFT', 'ON', 'OFF']
@@ -813,6 +814,215 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
     series,
     top,
   })
+}))
+
+// ---------------- 首页轮播（营销） ----------------
+
+const BANNER_MAX = 10
+const BANNER_LINK_TYPES = ['product', 'collection', 'shop', 'page', 'none']
+const BANNER_PUBLISH_ID = 'default'
+
+function bannerImage(value, label = '轮播图') {
+  const image = String(value ?? '').trim()
+  if (!image) throw httpError(`请上传${label}`)
+  if (image.length > 600000) throw httpError(`${label}过大`)
+  if (!/^(cloud:\/\/|https:\/\/)/i.test(image)) throw httpError(`${label}必须是云存储文件或 https 地址`)
+  return image
+}
+
+/**
+ * 轮播条目校验。链接类型决定 linkValue 的必填与格式：
+ * - product / collection：小程序商品 id 或合集 id
+ * - page：必须以 /pages/ 开头的站内路径
+ * - shop：无需值（跳转商城 tab）
+ */
+export function bannerData(body, { existing = null } = {}) {
+  const source = body && typeof body === 'object' ? body : {}
+  const pick = (key) => (source[key] !== undefined ? source[key] : existing?.[key])
+  const linkType = String(pick('linkType') ?? 'none').trim() || 'none'
+  if (!BANNER_LINK_TYPES.includes(linkType)) throw httpError('跳转类型不正确')
+  const rawLinkValue = String(pick('linkValue') ?? '').trim()
+  if (linkType === 'page' && !rawLinkValue.startsWith('/pages/')) throw httpError('页面路径必须以 /pages/ 开头')
+  if (linkType === 'product' && !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(rawLinkValue)) throw httpError('请填写有效的小程序商品 ID')
+  if (linkType === 'collection' && !rawLinkValue) throw httpError('请填写合集 ID')
+  if (['shop', 'none'].includes(linkType) && rawLinkValue) throw httpError('该跳转类型不需要填写目标值')
+
+  return {
+    image: bannerImage(pick('image')),
+    mobileImage: text(pick('mobileImage'), 600000, '移动端图片'),
+    title: text(pick('title'), 20, '标题', true),
+    en: text(pick('en'), 40, '英文标题'),
+    subtitle: text(pick('subtitle'), 40, '副标题'),
+    dateText: text(pick('dateText'), 30, '日期文案'),
+    ctaText: text(pick('ctaText'), 12, '按钮文案'),
+    linkType,
+    linkValue: linkType === 'shop' || linkType === 'none' ? '' : rawLinkValue,
+    sortOrder: integer(pick('sortOrder'), '排序', { min: 0, max: 999, fallback: 0 }),
+    enabled: pick('enabled') === undefined ? (existing?.enabled ?? true) : Boolean(pick('enabled')),
+  }
+}
+
+export function serializeBanner(row) {
+  return {
+    id: row.id,
+    image: row.image,
+    mobileImage: row.mobileImage || '',
+    title: row.title,
+    en: row.en || '',
+    subtitle: row.subtitle || '',
+    dateText: row.dateText || '',
+    ctaText: row.ctaText || '',
+    linkType: row.linkType || 'none',
+    linkValue: row.linkValue || '',
+    sortOrder: row.sortOrder,
+    enabled: row.enabled,
+    updatedAt: row.updatedAt,
+  }
+}
+
+/** 当前「启用中的条目」指纹，用于判断是否存在未发布改动 */
+export function bannerChecksum(rows) {
+  return checksum((rows || []).filter((row) => row.enabled).map((row) => ({
+    image: row.image,
+    mobile_image: row.mobileImage || '',
+    title: row.title,
+    en: row.en || '',
+    subtitle: row.subtitle || '',
+    date_text: row.dateText || '',
+    cta_text: row.ctaText || '',
+    link_type: row.linkType || 'none',
+    link_value: row.linkValue || '',
+    sort_order: row.sortOrder || 0,
+  })))
+}
+
+async function loadBanners() {
+  const [rows, publish] = await Promise.all([
+    prisma.onlineBanner.findMany({ orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] }),
+    prisma.onlineBannerPublish.findUnique({ where: { id: BANNER_PUBLISH_ID } }),
+  ])
+  const current = bannerChecksum(rows)
+  return {
+    rows,
+    publish: {
+      state: publish?.state || 'DRAFT',
+      version: publish?.version || 0,
+      publishedAt: publish?.publishedAt || null,
+      lastError: publish?.lastError || '',
+      dirty: !publish?.publishedAt || publish.checksum !== current,
+      checksum: publish?.checksum || '',
+    },
+  }
+}
+
+onlineCatalogRouter.get('/online-catalog/banners', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const { rows, publish } = await loadBanners()
+  // 浏览器无法渲染 cloud:// 文件 ID，展示用临时链接单独返回，绝不回写数据库
+  const lookup = await resolveTempUrls(rows.map((row) => row.image).filter(Boolean))
+  res.json({
+    ok: true,
+    banners: rows.map((row) => ({ ...serializeBanner(row), imageDisplay: lookup[row.image] || row.image })),
+    publish,
+  })
+}))
+
+onlineCatalogRouter.post('/online-catalog/banners', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const total = await prisma.onlineBanner.count()
+  if (total >= BANNER_MAX) throw httpError(`轮播最多 ${BANNER_MAX} 条，请先删除不用的条目`)
+  const data = bannerData(req.body)
+  const last = await prisma.onlineBanner.findFirst({ orderBy: { sortOrder: 'desc' } })
+  const created = await prisma.onlineBanner.create({
+    data: {
+      id: `bn-${crypto.randomUUID()}`,
+      ...data,
+      sortOrder: req.body && req.body.sortOrder !== undefined ? data.sortOrder : (last?.sortOrder ?? 0) + 1,
+      updatedById: req.user.id,
+    },
+  })
+  const createdLookup = await resolveTempUrls([created.image])
+  res.status(201).json({ ok: true, banner: { ...serializeBanner(created), imageDisplay: createdLookup[created.image] || created.image } })
+}))
+
+onlineCatalogRouter.put('/online-catalog/banners/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const existing = await prisma.onlineBanner.findUnique({ where: { id: String(req.params.id) } })
+  if (!existing) throw httpError('轮播条目不存在', 404)
+  const data = bannerData(req.body, { existing })
+  const updated = await prisma.onlineBanner.update({
+    where: { id: existing.id },
+    data: { ...data, version: { increment: 1 }, updatedById: req.user.id },
+  })
+  const updatedLookup = await resolveTempUrls([updated.image])
+  res.json({ ok: true, banner: { ...serializeBanner(updated), imageDisplay: updatedLookup[updated.image] || updated.image } })
+}))
+
+onlineCatalogRouter.delete('/online-catalog/banners/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const existing = await prisma.onlineBanner.findUnique({ where: { id: String(req.params.id) } })
+  if (!existing) throw httpError('轮播条目不存在', 404)
+  await prisma.onlineBanner.delete({ where: { id: existing.id } })
+  res.json({ ok: true })
+}))
+
+// 首次接手：把当前小程序包内的 7 条默认轮播导入成可编辑数据
+onlineCatalogRouter.post('/online-catalog/banners/import-defaults', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const total = await prisma.onlineBanner.count()
+  if (total > 0) throw httpError('已经有轮播数据，不能重复导入', 409)
+  await prisma.onlineBanner.createMany({
+    data: DEFAULT_BANNERS.map((banner) => ({
+      id: `bn-${crypto.randomUUID()}`,
+      ...banner,
+      updatedById: req.user.id,
+    })),
+  })
+  const { rows, publish } = await loadBanners()
+  res.status(201).json({ ok: true, imported: rows.length, banners: rows.map(serializeBanner), publish })
+}))
+
+onlineCatalogRouter.post('/online-catalog/banners/publish', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const { rows, publish } = await loadBanners()
+  const enabled = rows.filter((row) => row.enabled)
+  if (!enabled.length) throw httpError('至少要有 1 张启用的轮播图才能发布', 409)
+
+  const version = (publish.version || 0) + 1
+  const publisher = await getOnlineCatalogPublisher()
+  try {
+    const result = await publisher.publishBanners(enabled.map((row) => ({
+      image: row.image,
+      mobileImage: row.mobileImage,
+      title: row.title,
+      en: row.en,
+      subtitle: row.subtitle,
+      dateText: row.dateText,
+      ctaText: row.ctaText,
+      linkType: row.linkType,
+      linkValue: row.linkValue,
+      sortOrder: row.sortOrder,
+    })), { version })
+    await prisma.onlineBannerPublish.upsert({
+      where: { id: BANNER_PUBLISH_ID },
+      update: { state: 'PUBLISHED', version: result.version, checksum: result.checksum, publishedAt: new Date(), lastError: '' },
+      create: { id: BANNER_PUBLISH_ID, state: 'PUBLISHED', version: result.version, checksum: result.checksum, publishedAt: new Date() },
+    })
+    res.json({ ok: true, published: { version: result.version, count: result.count, checksum: result.checksum }, publish: (await loadBanners()).publish })
+  } catch (error) {
+    await prisma.onlineBannerPublish.upsert({
+      where: { id: BANNER_PUBLISH_ID },
+      update: { state: 'FAILED', lastError: String(error?.message || error).slice(0, 300) },
+      create: { id: BANNER_PUBLISH_ID, state: 'FAILED', lastError: String(error?.message || error).slice(0, 300) },
+    }).catch(() => {})
+    throw error
+  }
 }))
 
 onlineCatalogRouter.get('/online-catalog/categories', wrap(async (req, res) => {

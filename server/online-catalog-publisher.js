@@ -156,8 +156,66 @@ export function createOnlineCatalogPublisher({ app, envId = '', logger = console
     throw httpError('发布回读校验失败，请重试', 502)
   }
 
-  async function publishCategories(categories) {
-    const names = (categories || []).map((category) => category.name).filter(Boolean)
+  const BANNER_COLLECTION = 'home_banners'
+  const BANNER_DOC = 'config'
+
+  async function readBannerConfig() {
+    try {
+      const result = await db.collection(BANNER_COLLECTION).doc(BANNER_DOC).get()
+      return result?.data || null
+    } catch {
+      // 集合/文档不存在时返回 null（首次发布走 set）
+      return null
+    }
+  }
+
+  /**
+   * 轮播整包覆盖：小程序端只读一个文档。
+   * 用「单文档数组」而不是多文档，是为了让一次发布成为原子替换 —— 排序、增删、
+   * 启停在客户端看来不会出现「删到一半」的中间态。
+   */
+  async function publishBanners(banners, { version = 1 } = {}) {
+    const payload = {
+      id: BANNER_DOC,
+      version,
+      updatedAt: new Date().toISOString(),
+      banners: (banners || []).map((banner) => ({
+        image: banner.image,
+        mobile_image: banner.mobileImage || '',
+        title: banner.title,
+        en: banner.en || '',
+        subtitle: banner.subtitle || '',
+        date_text: banner.dateText || '',
+        cta_text: banner.ctaText || '',
+        link_type: banner.linkType || 'none',
+        link_value: banner.linkValue || '',
+        sort_order: banner.sortOrder || 0,
+      })),
+    }
+    if (!payload.banners.length) throw httpError('至少要有 1 张启用的轮播图才能发布', 409)
+
+    const ref = db.collection(BANNER_COLLECTION).doc(BANNER_DOC)
+    const existing = await readBannerConfig()
+    if (existing) await ref.update(payload)
+    else await ref.set(payload)
+
+    const expected = checksum({ version: payload.version, banners: payload.banners })
+    let readBack = null
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 * attempt))
+      readBack = await readBannerConfig()
+      if (!readBack) continue
+      const actual = checksum({ version: readBack.version, banners: readBack.banners || [] })
+      if (actual === expected) {
+        logger.info?.('[online-catalog] banners published', { envId, count: payload.banners.length, version: payload.version, attempts: attempt + 1 })
+        return { action: existing ? 'updated' : 'created', checksum: actual, count: payload.banners.length, version: payload.version }
+      }
+    }
+    if (!readBack) throw httpError('轮播发布后回读不到配置', 502)
+    throw httpError('轮播发布回读校验失败，请重试', 502)
+  }
+
+  async function publishCategories(categories) {    const names = (categories || []).map((category) => category.name).filter(Boolean)
     if (!names.length) throw httpError('没有可发布的线上分类', 409)
     const metaRef = db.collection(COLLECTION).doc(META_DOC)
     let existing = null
@@ -168,7 +226,7 @@ export function createOnlineCatalogPublisher({ app, envId = '', logger = console
     return { categories: names }
   }
 
-  return { publishProduct, publishCategories, readProduct, readAllProducts, uploadDataUrl, buildProductDoc, envId }
+  return { publishProduct, publishCategories, publishBanners, readProduct, readAllProducts, readBannerConfig, uploadDataUrl, buildProductDoc, envId }
 }
 
 export async function getOnlineCatalogPublisher() {

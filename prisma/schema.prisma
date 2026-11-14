@@ -122,7 +122,7 @@ model SweetCardControl {
 }
 
 model Store {
-  procurementOrders ProcurementOrder[]
+  procurementOrders            ProcurementOrder[]
   key                          String                   @id
   operationType                StoreOperationType       @default(UNKNOWN) @map("operation_type")
   name                         String                   @unique
@@ -319,52 +319,52 @@ model DailyEntryAuditLog {
 }
 
 model InventoryItem {
-  purchaseEnabled Boolean @default(false)
-  procurementSupplierId String?
-  procurementSupplier ProcurementSupplier? @relation(fields: [procurementSupplierId], references: [id], onDelete: Restrict)
-  procurementLines ProcurementOrderLine[]
-  procurementReturnProducts ProcurementReturnProduct[]
-  id                       String                     @id
-  name                     String                     @unique
-  unit                     String                     @default("")
-  spec                     String                     @default("")
-  barcode                  String                     @default("")
-  category                 String                     @default("product")
-  image                    String                     @default("")
-  sku                      String?                    @unique
-  posCategory              String                     @default("")
-  salePriceCents           BigInt?
-  costPriceCents           BigInt?
-  isActive                 Boolean                    @default(false)
-  trackInventory           Boolean                    @default(false)
-  sortOrder                Int                        @default(0)
-  transferCode             String?                    @unique
-  transferEnabled          Boolean                    @default(false)
-  transferSortOrder        Int                        @default(0)
-  transferBoxEnabled       Boolean                    @default(false)
-  transferBoxWeightGrams   Int?
-  transferPieceEnabled     Boolean                    @default(false)
-  transferPieceWeightGrams Int?
-  partnerSupplyEnabled     Boolean                    @default(false)
-  productCategoryId        String?
-  productGroupId           String?
-  variantName              String                     @default("")
-  version                  Int                        @default(1)
-  updatedAt                DateTime                   @default(now()) @updatedAt
-  createdAt                DateTime                   @default(now())
-  balances                 StockBalance[]
-  ledger                   StockLedger[]
-  transferItems            TransferItem[]
-  purchaseItems            PurchaseItem[]
-  waste                    WasteRecord[]
-  orderItems               OrderItem[]
-  partnerSupplyItems       PartnerSupplyItem[]
-  costHistories            InventoryItemCostHistory[]
-  productCategory          ProductCategory?           @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
-  productGroup             ProductGroup?              @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
-  sweetCardAllocations     SweetCardRedemptionItem[]
-  onlinePolicies           OnlineProductPolicy[]
-  onlineProfile            OnlineProductProfile?
+  purchaseEnabled             Boolean                    @default(false)
+  procurementSupplierId       String?
+  procurementSupplier         ProcurementSupplier?       @relation(fields: [procurementSupplierId], references: [id], onDelete: Restrict)
+  procurementLines            ProcurementOrderLine[]
+  procurementReturnProducts   ProcurementReturnProduct[]
+  id                          String                     @id
+  name                        String                     @unique
+  unit                        String                     @default("")
+  spec                        String                     @default("")
+  barcode                     String                     @default("")
+  category                    String                     @default("product")
+  image                       String                     @default("")
+  sku                         String?                    @unique
+  posCategory                 String                     @default("")
+  salePriceCents              BigInt?
+  costPriceCents              BigInt?
+  isActive                    Boolean                    @default(false)
+  trackInventory              Boolean                    @default(false)
+  sortOrder                   Int                        @default(0)
+  transferCode                String?                    @unique
+  transferEnabled             Boolean                    @default(false)
+  transferSortOrder           Int                        @default(0)
+  transferBoxEnabled          Boolean                    @default(false)
+  transferBoxWeightGrams      Int?
+  transferPieceEnabled        Boolean                    @default(false)
+  transferPieceWeightGrams    Int?
+  partnerSupplyEnabled        Boolean                    @default(false)
+  productCategoryId           String?
+  productGroupId              String?
+  variantName                 String                     @default("")
+  version                     Int                        @default(1)
+  updatedAt                   DateTime                   @default(now()) @updatedAt
+  createdAt                   DateTime                   @default(now())
+  balances                    StockBalance[]
+  ledger                      StockLedger[]
+  transferItems               TransferItem[]
+  purchaseItems               PurchaseItem[]
+  waste                       WasteRecord[]
+  orderItems                  OrderItem[]
+  partnerSupplyItems          PartnerSupplyItem[]
+  costHistories               InventoryItemCostHistory[]
+  productCategory             ProductCategory?           @relation(fields: [productCategoryId], references: [id], onDelete: Restrict)
+  productGroup                ProductGroup?              @relation(fields: [productGroupId], references: [id], onDelete: SetNull)
+  sweetCardAllocations        SweetCardRedemptionItem[]
+  onlinePolicies              OnlineProductPolicy[]
+  onlineProfile               OnlineProductProfile?
   partnerReplenishmentEnabled Boolean                    @default(false)
   partnerOrderUnit            String?
   partnerKgBasePriceCents     BigInt?
@@ -1382,22 +1382,22 @@ enum OrderPurpose {
 
 // Independent, append-only audit/tombstone. Deliberately no order FK/cascade.
 model OrderPurposeAudit {
-  id             String       @id
-  operationKey   String       @unique
-  action         String
-  orderType      String
-  orderId        String
-  orderNo        String
-  actorId        String
-  actorRole      String
-  reason         String
-  beforePurpose  OrderPurpose?
-  afterPurpose   OrderPurpose?
-  snapshot       Json
-  safety         Json
-  deletedCounts  Json
-  transactionId  BigInt       @default(dbgenerated("txid_current()"))
-  createdAt      DateTime     @default(now())
+  id            String        @id
+  operationKey  String        @unique
+  action        String
+  orderType     String
+  orderId       String
+  orderNo       String
+  actorId       String
+  actorRole     String
+  reason        String
+  beforePurpose OrderPurpose?
+  afterPurpose  OrderPurpose?
+  snapshot      Json
+  safety        Json
+  deletedCounts Json
+  transactionId BigInt        @default(dbgenerated("txid_current()"))
+  createdAt     DateTime      @default(now())
 
   @@index([orderType, orderId, createdAt])
 }
@@ -1423,24 +1423,22 @@ model CustomerServiceRequest {
   store                  Store                         @relation(fields: [storeKey], references: [key], onDelete: Restrict)
   createdBy              User?                         @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   tokens                 CustomerServiceRequestToken[]
-  customerUserId         String? @map("customer_user_id")
-  customerAppId          String? @map("customer_app_id")
-  customerEnvId          String? @map("customer_env_id")
-  customerOpenId         String? @map("customer_open_id")
-  subscriptionChoice     String? @map("subscription_choice")
-  subscriptionTemplateId String? @map("subscription_template_id")
-  receiptConfirmedAt     DateTime? @map("receipt_confirmed_at")
-  receiptConfirmedBy     String? @map("receipt_confirmed_by")
-  shipmentConfirmedAt    DateTime? @map("shipment_confirmed_at")
-  shipmentConfirmedBy    String? @map("shipment_confirmed_by")
+  customerUserId         String?                       @map("customer_user_id")
+  customerAppId          String?                       @map("customer_app_id")
+  customerEnvId          String?                       @map("customer_env_id")
+  customerOpenId         String?                       @map("customer_open_id")
+  subscriptionChoice     String?                       @map("subscription_choice")
+  subscriptionTemplateId String?                       @map("subscription_template_id")
+  receiptConfirmedAt     DateTime?                     @map("receipt_confirmed_at")
+  receiptConfirmedBy     String?                       @map("receipt_confirmed_by")
+  shipmentConfirmedAt    DateTime?                     @map("shipment_confirmed_at")
+  shipmentConfirmedBy    String?                       @map("shipment_confirmed_by")
   carrier                String?
-  trackingNo             String? @map("tracking_no")
-  deliveryProof          String? @map("delivery_proof")
-  shipmentVersion        Int @default(0) @map("shipment_version")
+  trackingNo             String?                       @map("tracking_no")
+  deliveryProof          String?                       @map("delivery_proof")
+  shipmentVersion        Int                           @default(0) @map("shipment_version")
 
   @@index([customerUserId, customerAppId, customerEnvId, submittedAt, id], map: "customer_service_requests_customer_scope_idx")
-
-
   @@index([type, status, createdAt])
   @@index([storeKey, status, createdAt])
   @@index([createdByUsername, type, status])
@@ -2132,22 +2130,22 @@ model Schedule {
 }
 
 model SweetCardBatch {
-  id                      String                @id
+  id                      String                   @id
   name                    String
-  purpose                 String                @default("")
-  businessPurpose         SweetCardBatchPurpose @map("business_purpose")
-  faceValueCents          BigInt                @map("face_value_cents")
-  cardCount               Int                   @map("card_count")
-  totalInitialAmountCents BigInt                @map("total_initial_amount_cents")
-  validityType            SweetCardValidityType @map("validity_type")
-  carrierType             SweetCardCarrierType  @map("carrier_type")
-  bindingMode             SweetCardBindingMode  @map("binding_mode")
-  giftingScenario         String                @default("") @map("gifting_scenario")
-  presentationTemplateKey String                @default("minimal-v1") @map("presentation_template_key")
-  createdById             String                @map("created_by_id")
-  createdByName           String                @default("") @map("created_by_name")
-  createdAt               DateTime              @default(now()) @map("created_at")
-  archivedAt              DateTime?             @map("archived_at")
+  purpose                 String                   @default("")
+  businessPurpose         SweetCardBatchPurpose    @map("business_purpose")
+  faceValueCents          BigInt                   @map("face_value_cents")
+  cardCount               Int                      @map("card_count")
+  totalInitialAmountCents BigInt                   @map("total_initial_amount_cents")
+  validityType            SweetCardValidityType    @map("validity_type")
+  carrierType             SweetCardCarrierType     @map("carrier_type")
+  bindingMode             SweetCardBindingMode     @map("binding_mode")
+  giftingScenario         String                   @default("") @map("gifting_scenario")
+  presentationTemplateKey String                   @default("minimal-v1") @map("presentation_template_key")
+  createdById             String                   @map("created_by_id")
+  createdByName           String                   @default("") @map("created_by_name")
+  createdAt               DateTime                 @default(now()) @map("created_at")
+  archivedAt              DateTime?                @map("archived_at")
   accounts                SweetCardAccount[]
   auditLogs               SweetCardAuditLog[]
   issueOperation          SweetCardIssueOperation?
@@ -2449,6 +2447,7 @@ model SweetCardOnlinePolicy {
   updatedById String           @map("updated_by_id")
   updatedAt   DateTime         @default(now()) @updatedAt @map("updated_at")
   account     SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
   @@map("sweet_card_online_policies")
 }
 
@@ -2462,6 +2461,7 @@ model OnlineProductPolicy {
   updatedById       String        @map("updated_by_id")
   updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at")
   product           InventoryItem @relation(fields: [productId], references: [id], onDelete: Restrict)
+
   @@unique([namespace, externalProductId, externalSkuId])
   @@map("online_product_policies")
 }
@@ -2476,6 +2476,7 @@ model OnlineCategory {
   createdAt DateTime               @default(now()) @map("created_at")
   updatedAt DateTime               @default(now()) @updatedAt @map("updated_at")
   products  OnlineProductProfile[]
+
   @@index([isActive, sortOrder])
   @@map("online_categories")
 }
@@ -2505,9 +2506,46 @@ model OnlineProductProfile {
   updatedAt        DateTime        @default(now()) @updatedAt @map("updated_at")
   inventoryItem    InventoryItem   @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
   category         OnlineCategory? @relation(fields: [onlineCategoryId], references: [id], onDelete: Restrict)
+
   @@index([status, sortOrder])
   @@index([onlineCategoryId, sortOrder])
   @@map("online_product_profiles")
+}
+
+/// 首页轮播（BUDU-MP-CONSOLE-001 / 营销）。OS 为编辑权威，发布后写入 CloudBase
+/// `home_banners/config`，小程序首页读取后覆盖包内 `HOME.banners`。
+model OnlineBanner {
+  id          String   @id
+  sortOrder   Int      @default(0) @map("sort_order")
+  enabled     Boolean  @default(true)
+  image       String   @default("")
+  title       String   @default("")
+  en          String   @default("")
+  subtitle    String   @default("")
+  dateText    String   @default("") @map("date_text")
+  ctaText     String   @default("") @map("cta_text")
+  linkType    String   @default("none") @map("link_type")
+  linkValue   String   @default("") @map("link_value")
+  version     Int      @default(1)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by_id")
+
+  @@index([enabled, sortOrder])
+  @@map("online_banners")
+}
+
+/// 轮播发布状态（单行，id 固定 default）。与商品档案分开，避免轮播改动污染商品发布记录。
+model OnlineBannerPublish {
+  id          String    @id
+  state       String    @default("DRAFT")
+  version     Int       @default(0)
+  checksum    String    @default("")
+  publishedAt DateTime? @map("published_at")
+  lastError   String    @default("") @map("last_error")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@map("online_banner_publish")
 }
 
 model OnlineCheckoutQuote {
@@ -2520,52 +2558,54 @@ model OnlineCheckoutQuote {
   createdAt          DateTime          @default(now()) @map("created_at")
   user               User              @relation(fields: [userId], references: [id], onDelete: Restrict)
   settlement         OnlineSettlement?
+
   @@unique([userId, requestKey])
   @@index([expiresAt])
   @@map("online_checkout_quotes")
 }
 
 model OnlineSettlement {
-  id                       String               @id
-  userId                   String               @map("user_id")
-  quoteId                  String               @unique @map("quote_id")
+  id                       String                          @id
+  userId                   String                          @map("user_id")
+  quoteId                  String                          @unique @map("quote_id")
   namespace                String
-  externalOrderId          String               @map("external_order_id")
-  requestKey               String               @map("request_key")
-  requestFingerprint       String               @map("request_fingerprint")
-  accountId                String?              @map("account_id")
-  status                   String               @default("PENDING")
-  version                  Int                  @default(1)
-  currency                 String               @default("CNY")
-  merchandiseCents         BigInt               @map("merchandise_cents")
-  eligibleMerchandiseCents BigInt               @map("eligible_merchandise_cents")
-  shippingCents            BigInt               @map("shipping_cents")
-  totalCents               BigInt               @map("total_cents")
-  sweetCardCents           BigInt               @map("sweet_card_cents")
-  wechatCents              BigInt               @map("wechat_cents")
-  capturedLedgerId         String?              @unique @map("captured_ledger_id")
-  expiresAt                DateTime             @map("expires_at")
-  paidAt                   DateTime?            @map("paid_at")
-  cancelledAt              DateTime?            @map("cancelled_at")
-  reconciliationReason     String?              @map("reconciliation_reason")
-  createdAt                DateTime             @default(now()) @map("created_at")
-  updatedAt                DateTime             @default(now()) @updatedAt @map("updated_at")
-  user                     User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
-  quote                    OnlineCheckoutQuote  @relation(fields: [quoteId], references: [id], onDelete: Restrict)
-  account                  SweetCardAccount?    @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  capturedLedger           SweetCardLedger?     @relation("OnlineCaptureLedger", fields: [capturedLedgerId], references: [id], onDelete: Restrict)
+  externalOrderId          String                          @map("external_order_id")
+  requestKey               String                          @map("request_key")
+  requestFingerprint       String                          @map("request_fingerprint")
+  accountId                String?                         @map("account_id")
+  status                   String                          @default("PENDING")
+  version                  Int                             @default(1)
+  currency                 String                          @default("CNY")
+  merchandiseCents         BigInt                          @map("merchandise_cents")
+  eligibleMerchandiseCents BigInt                          @map("eligible_merchandise_cents")
+  shippingCents            BigInt                          @map("shipping_cents")
+  totalCents               BigInt                          @map("total_cents")
+  sweetCardCents           BigInt                          @map("sweet_card_cents")
+  wechatCents              BigInt                          @map("wechat_cents")
+  capturedLedgerId         String?                         @unique @map("captured_ledger_id")
+  expiresAt                DateTime                        @map("expires_at")
+  paidAt                   DateTime?                       @map("paid_at")
+  cancelledAt              DateTime?                       @map("cancelled_at")
+  reconciliationReason     String?                         @map("reconciliation_reason")
+  createdAt                DateTime                        @default(now()) @map("created_at")
+  updatedAt                DateTime                        @default(now()) @updatedAt @map("updated_at")
+  user                     User                            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  quote                    OnlineCheckoutQuote             @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  account                  SweetCardAccount?               @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  capturedLedger           SweetCardLedger?                @relation("OnlineCaptureLedger", fields: [capturedLedgerId], references: [id], onDelete: Restrict)
   reservation              SweetCardReservation?
   tenders                  OnlineTender[]
   refunds                  OnlineRefund[]
   compensations            OnlinePaymentCompensation[]
   outbox                   OnlineOutbox[]
+  fulfillmentAuthorization OnlineFulfillmentAuthorization?
+  logisticsTrace           OnlineLogisticsTrace?
+  wechatShippingSync       OnlineWechatShippingSync?
+
   @@unique([namespace, externalOrderId])
   @@unique([userId, requestKey])
   @@index([status, expiresAt])
   @@map("online_settlements")
-  fulfillmentAuthorization OnlineFulfillmentAuthorization?
-  logisticsTrace           OnlineLogisticsTrace?
-  wechatShippingSync       OnlineWechatShippingSync?
 }
 
 model SweetCardReservation {
@@ -2583,6 +2623,7 @@ model SweetCardReservation {
   settlement   OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
   account      SweetCardAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
   user         User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
   @@index([accountId, status])
   @@index([status, expiresAt])
   @@map("sweet_card_reservations")
@@ -2603,6 +2644,7 @@ model OnlineTender {
   createdAt             DateTime         @default(now()) @map("created_at")
   updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at")
   settlement            OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+
   @@unique([settlementId, type])
   @@map("online_tenders")
 }
@@ -2635,6 +2677,7 @@ model OnlineRefund {
   updatedAt               DateTime         @default(now()) @updatedAt @map("updated_at")
   settlement              OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
   creditedLedger          SweetCardLedger? @relation("OnlineRefundLedger", fields: [creditedLedgerId], references: [id], onDelete: Restrict)
+
   @@unique([settlementId, requestKey])
   @@unique([settlementId, sequence])
   @@index([status, updatedAt])
@@ -2656,6 +2699,7 @@ model OnlinePaymentCompensation {
   createdAt             DateTime         @default(now()) @map("created_at")
   updatedAt             DateTime         @default(now()) @updatedAt @map("updated_at")
   settlement            OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+
   @@index([status, updatedAt])
   @@map("online_payment_compensations")
 }
@@ -2675,24 +2719,25 @@ model OnlineOutbox {
   lastError    String?          @map("last_error")
   createdAt    DateTime         @default(now()) @map("created_at")
   settlement   OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+
   @@unique([settlementId, version, type])
   @@index([deliveredAt, availableAt])
   @@map("online_outbox")
 }
 
-
 model OnlineFulfillmentAuthorization {
-  id                 String @id
-  settlementId       String @unique @map("settlement_id")
-  requestKey         String @map("request_key")
-  requestFingerprint String @map("request_fingerprint")
+  id                 String           @id
+  settlementId       String           @unique @map("settlement_id")
+  requestKey         String           @map("request_key")
+  requestFingerprint String           @map("request_fingerprint")
   method             String
-  carrierCode        String? @map("carrier_code")
-  trackingNo         String? @map("tracking_no")
-  actorId            String @map("actor_id")
-  settlementVersion  Int @map("settlement_version")
-  createdAt          DateTime @default(now()) @map("created_at")
+  carrierCode        String?          @map("carrier_code")
+  trackingNo         String?          @map("tracking_no")
+  actorId            String           @map("actor_id")
+  settlementVersion  Int              @map("settlement_version")
+  createdAt          DateTime         @default(now()) @map("created_at")
   settlement         OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+
   @@map("online_fulfillment_authorizations")
 }
 
@@ -2704,24 +2749,25 @@ model OnlineFulfillmentAuthorization {
 /// receiverPhone 等字段是承运商查单必需信息，由 CloudBase 边缘层在发货时
 /// 转发；OS 不从 payNo 或任何哈希推导它们。
 model OnlineLogisticsTrace {
-  id              String    @id
-  settlementId    String    @unique @map("settlement_id")
-  authorizationId String    @map("authorization_id")
-  status          String    @default("PENDING") // PENDING | SYNCED | UNSUPPORTED | FAILED
-  waybillToken    String?   @map("waybill_token")
-  receiverPhone   String    @map("receiver_phone")
-  goodsName       String    @map("goods_name")
-  goodsImgUrl     String    @map("goods_img_url")
-  orderDetailPath String    @map("order_detail_path")
-  attempts        Int       @default(0)
-  availableAt     DateTime  @default(now()) @map("available_at")
-  leaseUntil      DateTime? @map("lease_until")
-  leaseOwner      String?   @map("lease_owner")
-  lastError       String?   @map("last_error")
-  syncedAt        DateTime? @map("synced_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  id              String           @id
+  settlementId    String           @unique @map("settlement_id")
+  authorizationId String           @map("authorization_id")
+  status          String           @default("PENDING") // PENDING | SYNCED | UNSUPPORTED | FAILED
+  waybillToken    String?          @map("waybill_token")
+  receiverPhone   String           @map("receiver_phone")
+  goodsName       String           @map("goods_name")
+  goodsImgUrl     String           @map("goods_img_url")
+  orderDetailPath String           @map("order_detail_path")
+  attempts        Int              @default(0)
+  availableAt     DateTime         @default(now()) @map("available_at")
+  leaseUntil      DateTime?        @map("lease_until")
+  leaseOwner      String?          @map("lease_owner")
+  lastError       String?          @map("last_error")
+  syncedAt        DateTime?        @map("synced_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @default(now()) @updatedAt @map("updated_at")
   settlement      OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+
   @@index([status, availableAt])
   @@map("online_logistics_traces")
 }
@@ -2737,35 +2783,36 @@ model OnlineLogisticsTrace {
 /// 微信同步失败不得撤销发货、不得让商家看到「发货失败」、不得改支付/退款/
 /// 甜意卡任何状态，也不得改写 canonical fulfillment。
 model OnlineWechatShippingSync {
-  id                 String    @id
-  settlementId       String    @unique @map("settlement_id")
-  authorizationId    String    @map("authorization_id")
+  id                 String           @id
+  settlementId       String           @unique @map("settlement_id")
+  authorizationId    String           @map("authorization_id")
   /// PENDING_UPLOAD | PENDING_VERIFY | SYNCED | UNSUPPORTED | FAILED
-  status             String    @default("PENDING_UPLOAD")
+  status             String           @default("PENDING_UPLOAD")
   /// 履约方式：DELIVERY | PICKUP。两种履约的物流事实不对称，必须真实表达
   method             String
   /// 微信官方 logistics_type：1 = 快递，4 = 用户自提
-  logisticsType      Int       @map("logistics_type")
+  logisticsType      Int              @map("logistics_type")
   /// 微信官方 delivery_id（不是 BUDU 页面码；韵达是 YD 而非 YUNDA）。PICKUP 为 NULL
-  deliveryId         String?   @map("delivery_id")
+  deliveryId         String?          @map("delivery_id")
   /// PICKUP 为 NULL（由 DB CHECK 强制，不许用 sentinel 冒充运单）
-  trackingNo         String?   @map("tracking_no")
-  uploadTime         DateTime  @map("upload_time")
+  trackingNo         String?          @map("tracking_no")
+  uploadTime         DateTime         @map("upload_time")
   /// 防止同一 settlement 被不同的物流数据覆盖
-  payloadFingerprint String    @map("payload_fingerprint")
-  attempts           Int       @default(0)
-  verifyAttempts     Int       @default(0) @map("verify_attempts")
+  payloadFingerprint String           @map("payload_fingerprint")
+  attempts           Int              @default(0)
+  verifyAttempts     Int              @default(0) @map("verify_attempts")
   /// 「唯一一次受控重传」的持久化预算，DB 侧 CHECK 0..1，服务端原子赢取
-  reuploadCount      Int       @default(0) @map("reupload_count")
-  availableAt        DateTime  @default(now()) @map("available_at")
-  leaseUntil         DateTime? @map("lease_until")
-  leaseOwner         String?   @map("lease_owner")
-  lastError          String?   @map("last_error")
-  uploadAcceptedAt   DateTime? @map("upload_accepted_at")
-  verifiedAt         DateTime? @map("verified_at")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+  reuploadCount      Int              @default(0) @map("reupload_count")
+  availableAt        DateTime         @default(now()) @map("available_at")
+  leaseUntil         DateTime?        @map("lease_until")
+  leaseOwner         String?          @map("lease_owner")
+  lastError          String?          @map("last_error")
+  uploadAcceptedAt   DateTime?        @map("upload_accepted_at")
+  verifiedAt         DateTime?        @map("verified_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @default(now()) @updatedAt @map("updated_at")
   settlement         OnlineSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+
   @@index([status, availableAt])
   @@map("online_wechat_shipping_sync")
 }
@@ -2896,25 +2943,25 @@ model ProcurementNotificationEvent {
 
 // Current revision and last confirmed facts are separate. Reopening never erases facts.
 model ProcurementReturn {
-  id                   String   @id
-  number               String   @unique
-  status               String   @default("PROCESSING")
-  version              Int      @default(1)
-  content              Json
-  confirmedContent     Json?
-  storeKeys            String[]
-  createdById          String
-  createdByName        String
-  submittedByName      String?
-  submittedAt          DateTime?
-  confirmedById        String?
-  confirmedByName      String?
-  confirmedAt          DateTime?
-  createRequestKey     String   @unique
-  createPayloadHash    String
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
-  products             ProcurementReturnProduct[]
+  id                String                     @id
+  number            String                     @unique
+  status            String                     @default("PROCESSING")
+  version           Int                        @default(1)
+  content           Json
+  confirmedContent  Json?
+  storeKeys         String[]
+  createdById       String
+  createdByName     String
+  submittedByName   String?
+  submittedAt       DateTime?
+  confirmedById     String?
+  confirmedByName   String?
+  confirmedAt       DateTime?
+  createRequestKey  String                     @unique
+  createPayloadHash String
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  products          ProcurementReturnProduct[]
 
   @@index([status, createdAt])
   @@index([storeKeys], type: Gin)
@@ -2926,51 +2973,57 @@ model ProcurementReturnProduct {
   itemId   String
   record   ProcurementReturn @relation(fields: [returnId], references: [id], onDelete: Restrict)
   item     InventoryItem     @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
   @@id([returnId, itemId])
 }
 
 // Append-only business audit; retained independently of the source application.
 model StoreServiceAudit {
-  id String @id
-  requestId String @map("request_id")
-  actorId String @map("actor_id")
-  action String
-  reason String @default("")
-  detail Json @default("{}")
+  id        String   @id
+  requestId String   @map("request_id")
+  actorId   String   @map("actor_id")
+  action    String
+  reason    String   @default("")
+  detail    Json     @default("{}")
   createdAt DateTime @default(now()) @map("created_at")
+
   @@index([requestId, createdAt])
   @@map("store_service_audits")
 }
+
 model StoreServiceDelivery {
-  id String @id
-  requestId String @map("request_id")
-  event String
-  version Int @default(1)
-  userId String @map("user_id")
-  appId String @map("app_id")
-  envId String @map("env_id")
-  openId String @map("open_id")
-  channel String @default("WECHAT_SUBSCRIBE")
-  templateId String? @map("template_id")
-  status String @default("PENDING")
-  attempts Int @default(0)
-  nextAttemptAt DateTime @default(now()) @map("next_attempt_at")
-  claimedAt DateTime? @map("claimed_at")
-  claimId String? @map("claim_id")
-  platformCode String? @map("platform_code")
-  acceptedAt DateTime? @map("accepted_at")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  id            String    @id
+  requestId     String    @map("request_id")
+  event         String
+  version       Int       @default(1)
+  userId        String    @map("user_id")
+  appId         String    @map("app_id")
+  envId         String    @map("env_id")
+  openId        String    @map("open_id")
+  channel       String    @default("WECHAT_SUBSCRIBE")
+  templateId    String?   @map("template_id")
+  status        String    @default("PENDING")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now()) @map("next_attempt_at")
+  claimedAt     DateTime? @map("claimed_at")
+  claimId       String?   @map("claim_id")
+  platformCode  String?   @map("platform_code")
+  acceptedAt    DateTime? @map("accepted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
+
   @@unique([requestId, event, version, userId, channel], map: "store_service_delivery_event_key")
   @@index([status, nextAttemptAt])
   @@map("store_service_deliveries")
 }
+
 model StoreServiceVisit {
-  id String @id
-  requestId String @map("request_id")
-  userId String @map("user_id")
-  event String
+  id        String   @id
+  requestId String   @map("request_id")
+  userId    String   @map("user_id")
+  event     String
   createdAt DateTime @default(now()) @map("created_at")
+
   @@unique([requestId, userId, event])
   @@index([event, createdAt])
   @@map("store_service_visits")
