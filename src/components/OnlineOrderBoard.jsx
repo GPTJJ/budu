@@ -205,7 +205,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
           <div className="relative flex h-full w-[720px] max-w-[94vw] flex-col bg-white shadow-2xl">
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-6 py-4">
               <div>
-                <div className="text-base font-semibold text-slate-800">{detail?.orderNo || '订单'}</div>
+                <div className="max-w-[520px] truncate text-base font-semibold text-slate-800" title={detail?.orderNo}>{detail?.orderNo || '订单'}</div>
                 <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
                   {detail ? <StatePill state={detail.state} label={detail.stateLabel} /> : null}
                   <span>{detail?.customer?.name || ''}</span>
