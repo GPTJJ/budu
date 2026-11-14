@@ -327,7 +327,7 @@ export default function OnlineCatalogPage() {
     setNotice('')
     try {
       const { report } = await api('/v2/online-catalog/import-existing', { method: 'POST' })
-      setNotice(`导入完成：新建 ${report.created.length}，已管理 ${report.skipped.length}，未匹配 ${report.unmatched.length}，组合商品跳过 ${report.combo.length}，OS 未启用 ${report.inactive.length}，失败 ${report.failed.length}`)
+      setNotice(`导入完成：新建 ${report.created.length}，已管理 ${report.skipped.length}，未匹配 ${report.unmatched.length}，组合商品 ${report.combo.length}，OS 未启用 ${report.inactive.length}，失败 ${report.failed.length}`)
       await load()
     } catch (err) {
       setError(err.message || '导入失败')
