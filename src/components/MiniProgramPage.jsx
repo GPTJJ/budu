@@ -231,22 +231,22 @@ function Overview({ onGo }) {
           <ul className="divide-y divide-slate-100 text-sm">
             <li className="flex items-center justify-between px-4 py-3">
               <div>
-                <div className="text-slate-700">接订单列表与详情</div>
-                <div className="mt-0.5 text-[11px] text-slate-400">P1 · 数据已就绪，只需补接口与界面</div>
+                <div className="text-slate-700">订单列表 / 详情 / 发货</div>
+                <div className="mt-0.5 text-[11px] text-slate-400">P1 · 已上线，见「订单」与「发货」</div>
               </div>
-              <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">待建</span>
-            </li>
-            <li className="flex items-center justify-between px-4 py-3">
-              <div>
-                <div className="text-slate-700">发货工作台</div>
-                <div className="mt-0.5 text-[11px] text-slate-400">P1 · 复用 createOnlineFulfillment</div>
-              </div>
-              <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">待建</span>
+              <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">已完成</span>
             </li>
             <li className="flex items-center justify-between px-4 py-3">
               <div>
                 <div className="text-slate-700">售后审核</div>
                 <div className="mt-0.5 text-[11px] text-slate-400">P2 · 复用 createOnlineRefund</div>
+              </div>
+              <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">待建</span>
+            </li>
+            <li className="flex items-center justify-between px-4 py-3">
+              <div>
+                <div className="text-slate-700">首页轮播后台</div>
+                <div className="mt-0.5 text-[11px] text-slate-400">需先解决图片写入权限 + 客户端改造</div>
               </div>
               <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">待建</span>
             </li>

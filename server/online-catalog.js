@@ -497,7 +497,10 @@ function serializeOrderRow(row, fulfillment) {
     totalCents: String(row.totalCents),
     createdAt: row.createdAt,
     paidAt: row.paidAt,
-    customer: { name: row.user?.displayName || row.user?.username || '顾客' },
+    customer: {
+      name: row.user?.displayName
+        || (row.user?.username?.startsWith('wx_') ? `顾客 ${String(row.user.username).slice(-4)}` : (row.user?.username || '顾客')),
+    },
     payment: paymentMethodOf(row.tenders),
     fulfillment: fulfillment ? {
       method: fulfillment.method,

@@ -153,13 +153,14 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
       {error ? <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">{error}</div> : null}
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[880px]">
           <thead>
             <tr className="border-b border-slate-100 bg-[#FEFDFC] text-left text-[11px] text-slate-500">
-              <th className="px-4 py-2.5 font-medium">订单号</th>
+              <th className="w-[210px] px-4 py-2.5 font-medium">订单号</th>
               <th className="px-3 py-2.5 font-medium">顾客</th>
               <th className="px-3 py-2.5 font-medium">商品</th>
-              <th className="px-3 py-2.5 font-medium">金额</th>
+              <th className="w-[110px] px-3 py-2.5 font-medium">金额</th>
               <th className="px-3 py-2.5 font-medium">状态</th>
               <th className="px-3 py-2.5 font-medium">时间</th>
               <th className="px-4 py-2.5" />
@@ -173,7 +174,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
             ) : rows.map((row) => (
               <tr key={row.id} className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-[#FEFCFB]" onClick={() => openDetail(row.id)}>
                 <td className="px-4 py-3">
-                  <div className="font-mono text-[12px] text-slate-700">{row.orderNo}</div>
+                  <div className="max-w-[190px] truncate font-mono text-[12px] text-slate-700" title={row.orderNo}>{row.orderNo}</div>
                   <div className="mt-0.5 text-[11px] text-slate-400">{row.payment}</div>
                 </td>
                 <td className="px-3 py-3 text-xs text-slate-600">{row.customer.name}</td>
@@ -191,6 +192,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
             ))}
           </tbody>
         </table>
+        </div>
         <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5 text-[11px] text-slate-400">
           <span>共 {total} 笔</span>
           <span>{title} · 最近 {rows.length} 笔</span>
