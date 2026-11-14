@@ -162,7 +162,12 @@ export function createOnlineCatalogPublisher({ app, envId = '', logger = console
   async function readBannerConfig() {
     try {
       const result = await db.collection(BANNER_COLLECTION).doc(BANNER_DOC).get()
-      return result?.data || null
+      // @cloudbase/node-sdk 的 doc().get() 返回 { data: [doc] }（数组），
+      // 集合/文档不存在时 data 为空数组（truthy！）——必须先解出文档再判空，
+      // 否则「首次发布」会被误判为「已存在」而走 update，静默写不进去。
+      const data = result?.data
+      const doc = Array.isArray(data) ? data[0] : data
+      return doc && typeof doc === 'object' ? doc : null
     } catch {
       // 集合/文档不存在时返回 null（首次发布走 set）
       return null
