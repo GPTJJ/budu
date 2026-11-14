@@ -39,6 +39,8 @@ export default function AnalyticsBoard({ fixedDays = 0 }) {
   const { totals, series, top } = data
   const maxPaid = Math.max(1, ...series.map((row) => row.paidCents))
   const maxOrders = Math.max(1, ...series.map((row) => row.orders))
+  // 净成交全为 0（例如历史订单全部退款）时，柱子改用订单数，避免整块空白
+  const plotOrders = series.length > 0 && series.every((row) => row.paidCents === 0)
 
   return (
     <div>
@@ -60,15 +62,15 @@ export default function AnalyticsBoard({ fixedDays = 0 }) {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi label="净成交额" value={formatCents(totals.paidCents)} hint={`${totals.paidOrders} 笔已支付（已扣整单退款）`} />
         <Kpi label="订单数" value={totals.orders} hint={`取消 ${totals.cancelled} 笔`} />
-        <Kpi label="客单价" value={formatCents(totals.avgOrderCents)} hint="按已支付订单计算" />
-        <Kpi label="退款金额" value={formatCents(totals.refundCents)} hint={`退款率 ${totals.refundRate}%`} />
+        <Kpi label="客单价" value={formatCents(totals.avgOrderCents)} hint="按已支付订单的实付金额" />
+        <Kpi label="退款金额" value={formatCents(totals.refundCents)} hint={`${totals.refundedOrders} 笔退款 · ${totals.cancelled} 笔取消`} />
       </div>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
         <div className="rounded-2xl border border-slate-200 bg-white">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-700">每日订单与净成交</h2>
-            <span className="text-[11px] text-slate-400">柱高＝净成交，标注＝订单数</span>
+            <span className="text-[11px] text-slate-400">{plotOrders ? '柱高＝订单数（该区间无净成交）' : '柱高＝净成交，标注＝订单数'}</span>
           </div>
           <div className="px-4 pb-4 pt-6">
             {series.length ? (
@@ -77,8 +79,11 @@ export default function AnalyticsBoard({ fixedDays = 0 }) {
                   <div key={row.date} className="group flex min-w-[18px] flex-1 flex-col items-center justify-end gap-1">
                     <span className="text-[9px] text-slate-400">{row.orders}</span>
                     <div
-                      className="w-full max-w-[26px] rounded-t bg-gradient-to-t from-budu-500 to-budu-300"
-                      style={{ height: `${Math.max(3, Math.round((row.paidCents / maxPaid) * 120))}px`, opacity: row.paidCents ? 1 : 0.25 }}
+                      className={`w-full max-w-[26px] rounded-t bg-gradient-to-t ${plotOrders ? 'from-slate-400 to-slate-300' : 'from-budu-500 to-budu-300'}`}
+                      style={{
+                        height: `${Math.max(3, Math.round((plotOrders ? row.orders / maxOrders : row.paidCents / maxPaid) * 120))}px`,
+                        opacity: (plotOrders ? row.orders : row.paidCents) ? 1 : 0.2,
+                      }}
                       title={`${row.date} 订单 ${row.orders} · 净成交 ${formatCents(row.paidCents)}`}
                     />
                     <span className="rotate-0 text-[9px] text-slate-300">{row.date.slice(5)}</span>

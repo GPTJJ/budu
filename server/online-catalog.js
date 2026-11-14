@@ -757,7 +757,9 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
   const buckets = new Map()
   const products = new Map()
   let paidCents = 0
+  let grossCents = 0
   let paidOrders = 0
+  let refundedOrders = 0
   let refundCents = 0
   let cancelled = 0
 
@@ -773,6 +775,10 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
       const refunded = Number(row.status === 'REFUNDED' ? amount : 0)
       const net = amount - refunded
       paidCents += net
+      grossCents += amount
+      if (row.status === 'REFUNDED') refundedOrders += 1
+      grossCents += amount
+      if (row.status === 'REFUNDED') refundedOrders += 1
       bucket.paidCents += net
     }
     refundCents += (row.refunds || []).reduce((sum, refund) => sum + Number(refund.totalCents || 0), 0)
@@ -800,9 +806,11 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
       paidOrders,
       cancelled,
       paidCents,
+      grossCents,
       refundCents,
-      refundRate: rows.length ? Math.round(((rows.length - paidOrders) / rows.length) * 1000) / 10 : 0,
-      avgOrderCents: paidOrders ? Math.round(paidCents / paidOrders) : 0,
+      refundedOrders,
+      refundRate: paidOrders ? Math.round((refundedOrders / paidOrders) * 1000) / 10 : 0,
+      avgOrderCents: paidOrders ? Math.round(grossCents / paidOrders) : 0,
     },
     series,
     top,
