@@ -255,6 +255,22 @@ async function publishOne(profile) {
   return result
 }
 
+/**
+ * 导入时定位 OS 商品：优先用已有的 SKU 映射反查（权威），再退回名称精确匹配。
+ * 线上名与 OS 名经常不完全一致（如「Balls-礼盒」vs「Balls 自选四款礼盒」），
+ * 只靠名称会漏收编。
+ */
+export async function findImportItem(client, doc) {
+  const policy = await client.onlineProductPolicy.findFirst({
+    where: { namespace: ONLINE_CATALOG_NAMESPACE, externalProductId: doc.id, enabled: true },
+  })
+  if (policy?.productId) {
+    const byPolicy = await client.inventoryItem.findUnique({ where: { id: policy.productId } })
+    if (byPolicy) return byPolicy
+  }
+  return client.inventoryItem.findFirst({ where: { name: String(doc.name || '').trim(), category: 'product' } })
+}
+
 export const onlineCatalogRouter = Router()
 
 onlineCatalogRouter.get('/online-catalog/status', wrap(async (req, res) => {
@@ -505,7 +521,7 @@ onlineCatalogRouter.post('/online-catalog/import-existing', wrap(async (req, res
         report.skipped.push({ mpId: doc.id, reason: 'ALREADY_MANAGED' })
         continue
       }
-      const item = await prisma.inventoryItem.findFirst({ where: { name: String(doc.name || '').trim(), category: 'product' } })
+      const item = await findImportItem(prisma, doc)
       if (!item) {
         report.unmatched.push({ mpId: doc.id, name: doc.name || '' })
         continue

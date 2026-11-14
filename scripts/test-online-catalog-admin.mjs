@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildProductDoc, createOnlineCatalogPublisher, checksum } from '../server/online-catalog-publisher.js'
-import { normalizeMedia, onlineSkuId, productProfileData } from '../server/online-catalog.js'
+import { findImportItem, normalizeMedia, onlineSkuId, productProfileData } from '../server/online-catalog.js'
 import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
 import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
 
@@ -261,4 +261,51 @@ test('upload: 成功时把文件写进云存储并返回 fileID', async () => {
 test('upload: 云存储异常或无 fileID 时报错而不是静默成功', async () => {
   await assert.rejects(() => uploadCatalogImage(PNG_1PX, { client: { async uploadFile() { throw new Error('COS down') } } }), /图片上传失败/)
   await assert.rejects(() => uploadCatalogImage(PNG_1PX, { client: { async uploadFile() { return {} } } }), /未返回文件标识/)
+})
+
+
+// ---- 导入匹配（ONLINE-CATALOG-COMBO-002） ----
+
+test('findImportItem 优先用已有 SKU 映射反查，名称不一致也能收编', async () => {
+  const calls = []
+  const client = {
+    onlineProductPolicy: {
+      async findFirst({ where }) {
+        calls.push(['policy', where.externalProductId])
+        return { productId: 'it-balls' }
+      },
+    },
+    inventoryItem: {
+      async findUnique({ where }) { calls.push(['unique', where.id]); return { id: where.id, name: 'Balls 自选四款礼盒' } },
+      async findFirst() { throw new Error('should not fall back to name match') },
+    },
+  }
+  const item = await findImportItem(client, { id: 'bb', name: 'Balls-礼盒' })
+  assert.equal(item.id, 'it-balls')
+  assert.deepEqual(calls, [['policy', 'bb'], ['unique', 'it-balls']])
+})
+
+test('findImportItem 无映射时退回名称精确匹配', async () => {
+  const client = {
+    onlineProductPolicy: { async findFirst() { return null } },
+    inventoryItem: {
+      async findUnique() { throw new Error('no unique lookup expected') },
+      async findFirst({ where }) { return { id: 'it-x', name: where.name } },
+    },
+  }
+  const item = await findImportItem(client, { id: 'c9', name: ' 新商品 ' })
+  assert.equal(item.id, 'it-x')
+  assert.equal(item.name, '新商品')
+})
+
+test('findImportItem 映射指向的商品已删除时继续按名称兜底', async () => {
+  const client = {
+    onlineProductPolicy: { async findFirst() { return { productId: 'ghost' } } },
+    inventoryItem: {
+      async findUnique() { return null },
+      async findFirst() { return { id: 'it-real' } },
+    },
+  }
+  const item = await findImportItem(client, { id: 'x', name: '任意' })
+  assert.equal(item.id, 'it-real')
 })
