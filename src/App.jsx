@@ -12,7 +12,7 @@ const loadDashboard = () => import('./components/Dashboard')
 const Dashboard = lazyRetry(loadDashboard)
 const CustomerRequestPage = lazyRetry(() => import('./components/CustomerRequestPage'))
 const PartnerAccessPage = lazyRetry(() => import('./components/PartnerAccessPage'))
-const OnlineCatalogPage = lazyRetry(() => import('./components/OnlineCatalogPage'))
+const MiniProgramPage = lazyRetry(() => import('./components/MiniProgramPage'))
 
 export default function App() {
   const pathname = window.location.pathname.replace(/\/+$/, '') || '/'
@@ -36,12 +36,12 @@ export default function App() {
       </>
     )
   }
-  if (pathname === '/online-catalog') {
+  if (pathname === '/mini-program' || pathname === '/online-catalog') {
     return (
       <>
         <OverlayStackManager />
         <Suspense fallback={<AppLoading />}>
-          <OnlineCatalogPage />
+          <MiniProgramPage initialModule={pathname === '/online-catalog' ? 'products' : 'overview'} />
         </Suspense>
       </>
     )

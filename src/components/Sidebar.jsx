@@ -51,7 +51,7 @@ const subMenus = {
     { key: 'store-mailing', label: '门店邮寄' },
     { key: 'store-pos', label: 'POS 点单' },
     { key: 'product-center', label: '商品中心' },
-    { key: 'online-catalog', label: '小程序商品', href: '/online-catalog' },
+    { key: 'online-catalog', label: '小程序管理台', href: '/mini-program' },
   ],
   inventory: [
     { key: 'inventory-transfer', label: '门店调拨' },

@@ -408,6 +408,45 @@ onlineCatalogRouter.post('/online-catalog/uploads', wrap(async (req, res) => {
   res.status(201).json({ ok: true, fileId, cloudPath, size, url: lookup[fileId] || '' })
 }))
 
+// 概览（只读）：商品结构 + 近 7 日与今日成交 + 待处理售后/发货
+onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const now = new Date()
+  const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+  const todayStart = new Date(now)
+  todayStart.setHours(0, 0, 0, 0)
+  // 净成交：已支付且未整单退款
+  const settledWhere = (from) => ({ paidAt: { gte: from }, status: { not: 'REFUNDED' } })
+
+  const [productTotal, productOn, productDraft, productFailed, last7, today, paidTotal, shipped, refundPending, refundTotal] = await Promise.all([
+    prisma.onlineProductProfile.count(),
+    prisma.onlineProductProfile.count({ where: { status: 'ON' } }),
+    prisma.onlineProductProfile.count({ where: { status: 'DRAFT' } }),
+    prisma.onlineProductProfile.count({ where: { publishState: 'FAILED' } }),
+    prisma.onlineSettlement.aggregate({ where: settledWhere(since), _count: { _all: true }, _sum: { totalCents: true } }),
+    prisma.onlineSettlement.aggregate({ where: settledWhere(todayStart), _count: { _all: true }, _sum: { totalCents: true } }),
+    prisma.onlineSettlement.count({ where: { paidAt: { not: null } } }),
+    prisma.onlineFulfillmentAuthorization.count(),
+    prisma.onlineRefund.count({ where: { status: 'PENDING' } }),
+    prisma.onlineRefund.count(),
+  ])
+
+  res.json({
+    ok: true,
+    generatedAt: now.toISOString(),
+    products: { total: productTotal, on: productOn, draft: productDraft, failed: productFailed },
+    orders: {
+      last7: last7._count._all,
+      last7Cents: Number(last7._sum.totalCents || 0),
+      today: today._count._all,
+      todayCents: Number(today._sum.totalCents || 0),
+    },
+    fulfillment: { paid: paidTotal, shipped, pending: Math.max(0, paidTotal - shipped) },
+    refunds: { pending: refundPending, total: refundTotal },
+  })
+}))
+
 onlineCatalogRouter.get('/online-catalog/categories', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireCatalogManager(req.user)

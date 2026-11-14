@@ -79,7 +79,7 @@ function Modal({ title, children, onClose, wide = false }) {
   )
 }
 
-export default function OnlineCatalogPage() {
+export default function OnlineCatalogPage({ embedded = false }) {
   const [user, setUser] = useState(null)
   const [authError, setAuthError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -438,7 +438,8 @@ export default function OnlineCatalogPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-16">
+    <div className={embedded ? "pb-2" : "min-h-screen bg-slate-50 pb-16"}>
+      {embedded ? null : (
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           <div>
@@ -456,8 +457,19 @@ export default function OnlineCatalogPage() {
           </div>
         </div>
       </header>
+      )}
 
-      <main className="mx-auto max-w-6xl px-4 py-5">
+      <main className={embedded ? "py-1" : "mx-auto max-w-6xl px-4 py-5"}>
+        {embedded ? (
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+            <button type="button" className="rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50" onClick={importExisting} disabled={busy}>
+              导入现有
+            </button>
+            <button type="button" className="rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={openCreate} disabled={!categories.length}>
+              新增商品
+            </button>
+          </div>
+        ) : null}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <button type="button" className={`rounded-full border px-3 py-1.5 text-xs ${filter === 'all' ? 'border-budu-300 bg-budu-50 text-budu-700' : 'border-slate-200 bg-white text-slate-500'}`} onClick={() => setFilter('all')}>全部 {products.length}</button>
           {categories.map((category) => (
