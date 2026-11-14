@@ -849,7 +849,8 @@ export function bannerData(body, { existing = null } = {}) {
 
   return {
     image: bannerImage(pick('image')),
-    mobileImage: text(pick('mobileImage'), 600000, '移动端图片'),
+    // mobileImage 不落库（Prisma 模型无此列，写入会被严格校验拒绝）；
+    // 发布器写 CloudBase 时补 mobile_image: ''，小程序契约不变。
     title: text(pick('title'), 20, '标题', true),
     en: text(pick('en'), 40, '英文标题'),
     subtitle: text(pick('subtitle'), 40, '副标题'),
