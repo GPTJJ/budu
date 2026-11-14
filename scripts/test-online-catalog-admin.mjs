@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildProductDoc, createOnlineCatalogPublisher, checksum } from '../server/online-catalog-publisher.js'
-import { assertComboFlavors, comboSkus, findImportItem, normalizeComboInput, normalizeMedia, onlineSkuId, productProfileData, syncComboPolicies } from '../server/online-catalog.js'
+import { assertComboFlavors, assertComboOnShelf, comboSkus, findImportItem, normalizeComboInput, normalizeMedia, onlineSkuId, productProfileData, syncComboPolicies } from '../server/online-catalog.js'
 import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
 import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
 
@@ -372,4 +372,42 @@ test('syncComboPolicies 建全量映射、停用过期搭配', async () => {
   assert.equal(calls.created[0].enabled, true)
   assert.equal(calls.created[0].externalProductId, 'bb')
   assert.equal(calls.disabled.data.enabled, false, '不在新集合里的旧搭配必须停用')
+})
+
+
+// ---- 发布前在架阻断（ONLINE-CATALOG-COMBO-005） ----
+
+function shelfClient(rows) {
+  return { onlineProductProfile: { async findMany() { return rows } } }
+}
+const ON_ROWS = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6'].map((mpId) => ({ mpId, status: 'ON', combo: null }))
+
+test('assertComboOnShelf 全部口味在架时放行', async () => {
+  const docs = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6'].map((id) => ({ id, status: 'on', name: id }))
+  await assertComboOnShelf({ mpId: 'bb', combo: BB_COMBO }, { client: shelfClient(ON_ROWS), docs })
+})
+
+test('assertComboOnShelf 线上文档下架时阻断并指出商品', async () => {
+  const docs = ['b1', 'b2', 'b3', 'b4', 'b5'].map((id) => ({ id, status: 'on', name: id }))
+  docs.push({ id: 'b6', status: 'off', name: '巧克力豆.青苹果益生菌' })
+  await assert.rejects(
+    () => assertComboOnShelf({ mpId: 'bb', combo: BB_COMBO }, { client: shelfClient(ON_ROWS), docs }),
+    /未在架 b6（巧克力豆.青苹果益生菌）/,
+  )
+})
+
+test('assertComboOnShelf 线上缺失口味文档时阻断', async () => {
+  const docs = ['b1', 'b2', 'b3', 'b4', 'b5'].map((id) => ({ id, status: 'on', name: id }))
+  await assert.rejects(() => assertComboOnShelf({ mpId: 'bb', combo: BB_COMBO }, { client: shelfClient(ON_ROWS), docs }), /未在架 b6/)
+})
+
+test('assertComboOnShelf 非组合商品直接放行且不读目录', async () => {
+  let read = 0
+  await assertComboOnShelf({ mpId: 'c1', combo: null }, { client: shelfClient([]), readCatalog: async () => { read += 1; return [] } })
+  assert.equal(read, 0)
+})
+
+test('assertComboOnShelf 口味档案本身已下架时先被 DB 校验拦下', async () => {
+  const rows = ON_ROWS.map((row) => (row.mpId === 'b6' ? { ...row, status: 'OFF' } : row))
+  await assert.rejects(() => assertComboOnShelf({ mpId: 'bb', combo: BB_COMBO }, { client: shelfClient(rows), docs: [] }), /未上架：b6/)
 })

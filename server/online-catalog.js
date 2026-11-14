@@ -321,12 +321,34 @@ async function loadProfile(id) {
   return profile
 }
 
-async function publishOne(profile) {
+/**
+ * 发布前阻断：组合商品的口味必须全部「在架」。
+ * - DB 侧：口味档案存在、status=ON、本身不是组合；
+ * - 线上侧：CloudBase 文档存在且 status=on（否则小程序端根本选不到该口味）。
+ */
+export async function assertComboOnShelf(profile, { docs = null, client = prisma, readCatalog = null } = {}) {
+  if (!profile?.combo) return
+  await assertComboFlavors(client, profile.combo, profile.mpId)
+  const catalog = docs || (readCatalog ? await readCatalog() : [])
+  const byId = new Map((catalog || []).map((doc) => [doc.id, doc]))
+  const offline = []
+  for (const id of profile.combo.flavorIds) {
+    if (id === profile.mpId) continue
+    const doc = byId.get(id)
+    if (!doc || doc.status !== 'on') offline.push(`${id}${doc?.name ? `（${doc.name}）` : ''}`)
+  }
+  if (offline.length) {
+    throw httpError(`发布前检查未通过：口味商品未在架 ${offline.join('、')}，请先上架后再发布`, 409)
+  }
+}
+
+async function publishOne(profile, { catalogDocs = null } = {}) {
   const publisher = await getOnlineCatalogPublisher()
   const category = profile.category
   if (!category) throw httpError('请先选择线上分类', 409)
   if (!category.isActive) throw httpError('分类已停用，不能发布', 409)
   if (!profile.inventoryItem || profile.inventoryItem.isActive !== true) throw httpError('对应 OS 商品未启用，不能发布', 409)
+  await assertComboOnShelf(profile, { docs: catalogDocs, readCatalog: () => publisher.readAllProducts() })
 
   const categories = await prisma.onlineCategory.findMany({ where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] })
   await publisher.publishCategories(categories)
@@ -712,11 +734,19 @@ onlineCatalogRouter.post('/online-catalog/publish-batch', wrap(async (req, res) 
   requireCatalogManager(req.user)
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id) => String(id)).filter(Boolean) : []
   if (!ids.length || ids.length > 100) throw httpError('请选择 1-100 个商品发布')
+  // 批量发布时目录只读一次，避免每个商品都拉全量文档
+  let catalogDocs = null
+  try {
+    const publisher = await getOnlineCatalogPublisher()
+    catalogDocs = await publisher.readAllProducts()
+  } catch {
+    catalogDocs = null
+  }
   const results = []
   for (const id of ids) {
     try {
       const profile = await loadProfile(id)
-      const result = await publishOne(profile)
+      const result = await publishOne(profile, { catalogDocs })
       results.push({ id, ok: true, result })
     } catch (error) {
       await prisma.onlineProductProfile.update({ where: { id }, data: { publishState: 'FAILED', lastError: String(error.message || '发布失败').slice(0, 500) } }).catch(() => {})
