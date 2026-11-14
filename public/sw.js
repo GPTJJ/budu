@@ -1,4 +1,4 @@
-const CACHE_NAME = 'budu-shell-v18'
+const CACHE_NAME = 'budu-shell-v19'
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
@@ -45,12 +45,20 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
+  // 只缓存真正的静态资源。SPA 回退会用 200 + text/html 掩盖 404，
+  // 若把它当资源缓存下来，图片/脚本一旦曾经缺失就会永久坏掉。
+  const cacheable = (response) => {
+    if (!response.ok) return false
+    if ((response.headers.get('content-type') || '').includes('text/html')) return false
+    return url.pathname.startsWith('/assets/') || url.pathname.startsWith('/mp-images/') || /\.(?:png|jpe?g|webp|svg|ico|css|js|woff2?)$/i.test(url.pathname)
+  }
+
   event.respondWith(
     caches.match(request).then(
       (cached) =>
         cached ||
         fetch(request).then((response) => {
-          if (response.ok) {
+          if (cacheable(response)) {
             const copy = response.clone()
             caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
           }
