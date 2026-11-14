@@ -213,7 +213,11 @@ export function createOnlineCatalogPublisher({ app, envId = '', logger = console
       const actual = checksum({ version: readBack.version, banners: readBack.banners || [] })
       if (actual === expected) {
         logger.info?.('[online-catalog] banners published', { envId, count: payload.banners.length, version: payload.version, attempts: attempt + 1 })
-        return { action: existing ? 'updated' : 'created', checksum: actual, count: payload.banners.length, version: payload.version }
+        // 返回给发布状态表存储的指纹只含「启用条目内容」（不含 version），
+        // 与脏检查 bannerChecksum(rows) 同口径——否则每次发布后都会被误判为
+        // 「有改动未同步」（version 每次发布必然变化）。
+        // 回读校验仍用带 version 的指纹，防止把旧版本文档误认成本次发布结果。
+        return { action: existing ? 'updated' : 'created', checksum: checksum(payload.banners), count: payload.banners.length, version: payload.version }
       }
     }
     if (!readBack) throw httpError('轮播发布后回读不到配置', 502)
