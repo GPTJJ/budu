@@ -188,7 +188,7 @@ function Overview({ onGo }) {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Kpi label="今日成交额" value={formatCents(orders.todayCents)} hint={`${orders.today} 笔已支付`} />
         <Kpi label="近 7 日成交额" value={formatCents(orders.last7Cents)} hint={`${orders.last7} 笔已支付`} />
-        <Kpi label="待发货" value={fulfillment.pending} hint={`累计已支付 ${fulfillment.paid} · 已发货 ${fulfillment.shipped}`} />
+        <Kpi label="待发货" value={fulfillment.pending} hint={`已支付 ${fulfillment.paid} · 历史已发货 ${fulfillment.shipped}`} />
         <Kpi label="待处理退款" value={refunds.pending} hint={`历史退款 ${refunds.total} 笔`} />
       </div>
 
