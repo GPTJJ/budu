@@ -16,6 +16,8 @@ import { httpError, parseCents } from './pos-core.js'
 import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
 import { getOnlineCatalogPublisher, buildProductDoc } from './online-catalog-publisher.js'
 import { enumerateOnlineSkus } from './online-catalog-coverage.js'
+import { createOnlineFulfillment } from './online-fulfillment.js'
+import { registerWechatShipping } from './online-console-bridge.js'
 import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls } from './online-catalog-media.js'
 import { uploadCatalogImage } from './online-catalog-upload.js'
 
@@ -447,6 +449,199 @@ onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
     },
     fulfillment: { paid: paidRows.length, shipped: shippedIds.size, pending: pendingFulfillment },
     refunds: { pending: refundPending, total: refundTotal },
+  })
+}))
+
+// ---------------- 订单（P1，只读 + 发货） ----------------
+
+const ORDER_LIST_LIMIT = 300
+const ORDER_PAGE_SIZE = 20
+const ORDER_STATE_LABEL = { TO_SHIP: '待发货', SHIPPED: '已发货', REFUNDED: '已退款', CANCELLED: '已取消', PENDING: '待支付' }
+const TENDER_LABEL = { WECHAT: '微信支付', SWEET_CARD: '甜意卡', SWEETCARD: '甜意卡' }
+
+function orderLinesFromSnapshot(snapshot) {
+  const lines = Array.isArray(snapshot?.lines) ? snapshot.lines : []
+  return lines.map((line) => ({
+    name: String(line.name || line.productId || '商品'),
+    skuId: String(line.skuId || ''),
+    spec: String(line.spec || ''),
+    quantity: Number(line.quantity) || 0,
+    amountCents: String(line.lineAmountCents ?? line.unitPriceCents ?? '0'),
+    comboFlavors: Array.isArray(line.comboFlavors) ? line.comboFlavors : null,
+  }))
+}
+
+function orderStateOf(status, shipped) {
+  if (status === 'REFUNDED') return 'REFUNDED'
+  if (status === 'CANCELLED') return 'CANCELLED'
+  if (status === 'PAID') return shipped ? 'SHIPPED' : 'TO_SHIP'
+  return 'PENDING'
+}
+
+function paymentMethodOf(tenders) {
+  const types = [...new Set((tenders || []).filter((tender) => tender.status === 'SUCCEEDED' || tender.status === 'CAPTURED').map((tender) => tender.type))]
+  if (!types.length) return '—'
+  return types.map((type) => TENDER_LABEL[type] || type).join(' + ')
+}
+
+function serializeOrderRow(row, fulfillment) {
+  const lines = orderLinesFromSnapshot(row.quote?.snapshot)
+  const state = orderStateOf(row.status, Boolean(fulfillment))
+  const refundCents = (row.refunds || []).reduce((sum, refund) => sum + Number(refund.totalCents || 0), 0)
+  return {
+    id: row.id,
+    orderNo: row.externalOrderId || row.id,
+    state,
+    stateLabel: ORDER_STATE_LABEL[state] || state,
+    currency: row.currency,
+    totalCents: String(row.totalCents),
+    createdAt: row.createdAt,
+    paidAt: row.paidAt,
+    customer: { name: row.user?.displayName || row.user?.username || '顾客' },
+    payment: paymentMethodOf(row.tenders),
+    fulfillment: fulfillment ? {
+      method: fulfillment.method,
+      carrierCode: fulfillment.carrierCode || '',
+      trackingNo: fulfillment.trackingNo || '',
+      shippedAt: fulfillment.createdAt,
+    } : null,
+    refund: refundCents > 0 ? { count: (row.refunds || []).length, totalCents: String(refundCents) } : null,
+    lines: lines.slice(0, 3),
+    lineCount: lines.reduce((count, line) => count + line.quantity, 0),
+  }
+}
+
+const orderInclude = {
+  user: { select: { id: true, displayName: true, username: true } },
+  quote: { select: { snapshot: true } },
+  tenders: true,
+  refunds: true,
+}
+
+onlineCatalogRouter.get('/online-catalog/orders', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const keyword = text(req.query.q, 50, '搜索词')
+  const state = text(req.query.state, 20, '状态')
+  const page = integer(req.query.page, '页码', { min: 1, max: 1000, fallback: 1 })
+
+  const rows = await prisma.onlineSettlement.findMany({
+    where: keyword ? {
+      OR: [
+        { externalOrderId: { contains: keyword } },
+        { id: { contains: keyword } },
+        { user: { is: { displayName: { contains: keyword } } } },
+        { user: { is: { username: { contains: keyword } } } },
+      ],
+    } : undefined,
+    include: orderInclude,
+    orderBy: { createdAt: 'desc' },
+    take: ORDER_LIST_LIMIT,
+  })
+  const ids = rows.map((row) => row.id)
+  // 发货授权是独立表：一次批量取回，避免 N+1
+  const authorizations = ids.length
+    ? await prisma.onlineFulfillmentAuthorization.findMany({ where: { settlementId: { in: ids } } })
+    : []
+  const shippedById = new Map(authorizations.map((row) => [row.settlementId, row]))
+  let orders = rows.map((row) => serializeOrderRow(row, shippedById.get(row.id)))
+  if (state) orders = orders.filter((order) => order.state === state)
+
+  const start = (page - 1) * ORDER_PAGE_SIZE
+  res.json({
+    ok: true,
+    total: orders.length,
+    page,
+    pageSize: ORDER_PAGE_SIZE,
+    orders: orders.slice(start, start + ORDER_PAGE_SIZE),
+  })
+}))
+
+onlineCatalogRouter.get('/online-catalog/orders/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const row = await prisma.onlineSettlement.findUnique({ where: { id: String(req.params.id) }, include: orderInclude })
+  if (!row) throw httpError('订单不存在', 404)
+  const fulfillment = await prisma.onlineFulfillmentAuthorization.findUnique({ where: { settlementId: row.id } })
+  const summary = serializeOrderRow(row, fulfillment)
+  const logistics = fulfillment ? await prisma.onlineLogisticsTrace.findUnique({ where: { settlementId: row.id } }) : null
+
+  const timeline = []
+  timeline.push({ at: row.createdAt, label: '订单创建' })
+  if (row.paidAt) timeline.push({ at: row.paidAt, label: `支付成功（${summary.payment}）` })
+  if (fulfillment) {
+    timeline.push({
+      at: fulfillment.createdAt,
+      label: fulfillment.method === 'PICKUP'
+        ? '顾客已取货'
+        : `已发货${fulfillment.carrierCode ? ` · ${fulfillment.carrierCode}` : ''}${fulfillment.trackingNo ? ` ${fulfillment.trackingNo}` : ''}`,
+    })
+  }
+  for (const refund of row.refunds || []) {
+    timeline.push({ at: refund.createdAt, label: `退款${refund.status === 'SETTLED' ? '已到账' : '处理中'}${refund.totalCents ? ` · ¥${(Number(refund.totalCents) / 100).toFixed(2)}` : ''}` })
+  }
+  if (row.cancelledAt) timeline.push({ at: row.cancelledAt, label: '订单已取消' })
+  timeline.sort((a, b) => new Date(a.at) - new Date(b.at))
+
+  res.json({
+    ok: true,
+    order: {
+      ...summary,
+      lines: orderLinesFromSnapshot(row.quote?.snapshot),
+      merchandiseCents: String(row.merchandiseCents),
+      shippingCents: String(row.shippingCents),
+      discountCents: String(row.quote?.snapshot?.discountCents || 0),
+      tenders: (row.tenders || []).map((tender) => ({ type: tender.type, label: TENDER_LABEL[tender.type] || tender.type, status: tender.status, amountCents: String(tender.amountCents) })),
+      logistics: logistics ? { status: logistics.status, waybillToken: logistics.waybillToken || '', syncedAt: logistics.syncedAt || null } : null,
+      timeline,
+    },
+  })
+}))
+
+onlineCatalogRouter.post('/online-catalog/orders/:id/fulfill', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const body = req.body || {}
+  const method = body.method === 'PICKUP' ? 'PICKUP' : 'DELIVERY'
+  const carrierCode = method === 'DELIVERY' ? text(body.carrierCode, 40, '物流公司', true) : null
+  const trackingNo = method === 'DELIVERY' ? text(body.trackingNo, 80, '运单号', true) : null
+
+  const settlement = await prisma.onlineSettlement.findUnique({ where: { id: String(req.params.id) } })
+  if (!settlement) throw httpError('订单不存在', 404)
+  if (settlement.status !== 'PAID' || !settlement.paidAt) throw httpError('只有已支付且未退款的订单可以发货', 409)
+
+  // 幂等键由履约内容派生：重复点击 / 网络重试返回同一份授权
+  const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ method, carrierCode, trackingNo })).digest('hex').slice(0, 16)
+  const requestKey = `os-${settlement.id}-${fingerprint}`
+  const service = createOnlineFulfillment(prisma, { authorize: async () => ({ actorId: req.user.id }) })
+  const receipt = await service.authorize({
+    settlementId: settlement.id,
+    actor: { id: req.user.id },
+    requestKey,
+    method,
+    carrierCode,
+    trackingNo,
+  })
+
+  // 微信「发货信息管理」登记：复用运行时同一套客户端，失败只记录，不影响发货事实
+  let shippingSync = { ok: true, skipped: true }
+  try {
+    const result = await registerWechatShipping(settlement.id)
+    shippingSync = { ok: true, status: result?.status || 'REGISTERED' }
+  } catch (error) {
+    shippingSync = { ok: false, error: String(error?.message || error).slice(0, 120) }
+  }
+
+  res.json({
+    ok: true,
+    fulfillment: {
+      id: receipt.id,
+      method: receipt.method,
+      carrierCode: receipt.carrierCode || '',
+      trackingNo: receipt.trackingNo || '',
+      shippedAt: receipt.authorizedAt,
+    },
+    shippingSync,
   })
 }))
 

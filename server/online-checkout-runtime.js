@@ -50,6 +50,10 @@ export function createOnlineCheckoutRuntime({db,gatewayConfig,paymentConfig,mirr
         res.status(error?.type==='entity.too.large'?413:400).json({ok:false,error:'ONLINE_REQUEST_INVALID'})
       })
     },
+    // 供 OS 控制台在发货后登记微信发货信息（幂等，失败不影响发货事实）
+    async registerShipping(settlementId) {
+      return shippingSync.register({ settlementId })
+    },
     async tick() {
       // Exposed for controlled one-shot operational recovery and isolated tests.
       // No caller money/state and no switch required to finish existing facts.

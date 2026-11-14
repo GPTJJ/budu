@@ -14,6 +14,7 @@ import {
 import { api } from '../utils/api'
 import { formatCents } from '../utils/pos'
 import OnlineCatalogPage from './OnlineCatalogPage'
+import OnlineOrderBoard from './OnlineOrderBoard'
 
 /**
  * 小程序管理台外壳（BUDU-MP-CONSOLE-001 / P0）
@@ -46,12 +47,13 @@ const MODULES = [
     key: 'orders',
     label: '订单',
     icon: ReceiptText,
-    desc: '小程序订单检索与履约',
+    desc: '小程序订单检索与履约：点任意一行打开详情，可直接发货',
     views: [
-      { key: 'orders', label: '全部订单' },
-      { key: 'orders-pending', label: '待发货' },
-      { key: 'orders-shipped', label: '待收货' },
-      { key: 'orders-done', label: '已完成' },
+      { key: 'orders', label: '全部订单', state: '' },
+      { key: 'orders-pending', label: '待发货', state: 'TO_SHIP' },
+      { key: 'orders-shipped', label: '已发货', state: 'SHIPPED' },
+      { key: 'orders-refunded', label: '已退款', state: 'REFUNDED' },
+      { key: 'orders-cancelled', label: '已取消', state: 'CANCELLED' },
     ],
   },
   {
@@ -69,11 +71,11 @@ const MODULES = [
     key: 'shipments',
     label: '发货',
     icon: Truck,
-    desc: '批量发货、物流同步与异常处理',
+    desc: '待发货订单集中处理：填单号即发货，并自动登记微信发货信息',
     views: [
-      { key: 'shipments', label: '待发货' },
-      { key: 'shipments-done', label: '已发货' },
-      { key: 'shipments-issue', label: '物流异常' },
+      { key: 'shipments', label: '待发货', state: 'TO_SHIP' },
+      { key: 'shipments-done', label: '已发货', state: 'SHIPPED' },
+      { key: 'shipments-issue', label: '物流异常', state: 'ISSUE' },
     ],
   },
   {
@@ -347,7 +349,11 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
           <PageHead title={view.label === '商品列表' ? '商品' : view.label} desc={module.desc} />
           {viewKey === 'overview' ? <Overview onGo={go} /> : null}
           {viewKey === 'products' ? <OnlineCatalogPage embedded /> : null}
-          {viewKey !== 'overview' && viewKey !== 'products' ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
+          {(moduleKey === 'orders' || moduleKey === 'shipments') && view.state !== 'ISSUE' ? (
+            <OnlineOrderBoard key={viewKey} initialState={view.state || ''} title={view.label} showFilters={moduleKey === 'orders'} />
+          ) : null}
+          {moduleKey === 'shipments' && view.state === 'ISSUE' ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
+          {moduleKey !== 'overview' && moduleKey !== 'orders' && moduleKey !== 'shipments' && viewKey !== 'products' ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
         </div>
       </main>
     </div>
