@@ -15,6 +15,7 @@ import { prisma, dbReady } from './pg.js'
 import { httpError, parseCents } from './pos-core.js'
 import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
 import { getOnlineCatalogPublisher, buildProductDoc } from './online-catalog-publisher.js'
+import { enumerateOnlineSkus } from './online-catalog-coverage.js'
 import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls } from './online-catalog-media.js'
 import { uploadCatalogImage } from './online-catalog-upload.js'
 
@@ -146,6 +147,85 @@ export async function suggestMpId(tx, categoryName) {
   return `${prefix}${next}`
 }
 
+/** 枚举某个组合商品的全部可售 SKU（与结算侧同一套规则） */
+export function comboSkus(mpId, combo) {
+  const flavors = (combo?.flavorIds || []).map((id) => ({ id, status: 'on', combo: null }))
+  const rows = enumerateOnlineSkus([{ id: mpId, status: 'on', combo }, ...flavors])
+  return rows.filter((row) => row.productId === mpId).map((row) => row.skuId)
+}
+
+export const COMBO_MAX_SKUS = 500
+
+/**
+ * 组合商品每次保存都重建 SKU 映射：新增组合全部可用，被删掉的口味组合则停用。
+ * 结算侧（online-checkout）按 externalSkuId 精确查映射，缺一条就 CATALOG_MAPPING_REQUIRED。
+ */
+export async function syncComboPolicies(tx, { mpId, combo, productId, enabled, userId }) {
+  const skuIds = comboSkus(mpId, combo)
+  if (!skuIds.length) throw httpError('该组合配置没有任何可售搭配，请检查口味与口味数')
+  if (skuIds.length > COMBO_MAX_SKUS) throw httpError(`组合搭配超过 ${COMBO_MAX_SKUS} 种，请减少口味或口味数`)
+  const base = { namespace: ONLINE_CATALOG_NAMESPACE, externalProductId: mpId }
+  await tx.onlineProductPolicy.createMany({
+    data: skuIds.map((externalSkuId) => ({
+      id: `opp-${crypto.randomUUID()}`,
+      ...base,
+      externalSkuId,
+      productId,
+      enabled,
+      updatedById: userId,
+    })),
+    skipDuplicates: true,
+  })
+  await tx.onlineProductPolicy.updateMany({
+    where: { ...base, externalSkuId: { in: skuIds } },
+    data: { productId, enabled, updatedById: userId },
+  })
+  await tx.onlineProductPolicy.updateMany({
+    where: { ...base, externalSkuId: { notIn: skuIds } },
+    data: { enabled: false, updatedById: userId },
+  })
+  return skuIds.length
+}
+
+export const COMBO_MAX_SLOTS = 12
+export const COMBO_MAX_FLAVORS = 24
+
+/**
+ * 校验并归一化组合配置。槽位/口味范围由管理页维护；unitPriceCent 永远由线上价派生，
+ * 不接受前端传入（避免和 priceCents 打架）。
+ */
+export function normalizeComboInput(value, { priceCents = null, mpId = '' } = {}) {
+  if (value === null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) throw httpError('组合配置格式不正确')
+  const slots = integer(value.slots, '每盒口味数', { min: 1, max: COMBO_MAX_SLOTS })
+  if (typeof value.repeat !== 'boolean') throw httpError('组合配置缺少「可否重复选」')
+  if (!Array.isArray(value.flavorIds)) throw httpError('请选择可选口味')
+  const flavorIds = [...new Set(value.flavorIds.map((id) => String(id ?? '').trim()).filter(Boolean))]
+  if (!flavorIds.length) throw httpError('组合商品至少要有 1 个可选口味')
+  if (flavorIds.length > COMBO_MAX_FLAVORS) throw httpError(`可选口味最多 ${COMBO_MAX_FLAVORS} 个`)
+  if (mpId && flavorIds.includes(mpId)) throw httpError('组合商品不能把自己选为口味')
+  if (!value.repeat && slots > flavorIds.length) {
+    throw httpError('不允许重复选口味时，每盒口味数不能超过可选口味数量')
+  }
+  const unitPriceCent = priceCents === null || priceCents === undefined ? null : Number(priceCents)
+  return { slots, repeat: value.repeat, flavorIds, ...(unitPriceCent === null ? {} : { unitPriceCent }) }
+}
+
+/** 口味必须是已存在的线上商品，且处于上架状态；否则小程序端会枚举不出组合 */
+export async function assertComboFlavors(client, combo, selfMpId) {
+  if (!combo) return
+  const ids = combo.flavorIds.filter((id) => id !== selfMpId)
+  if (!ids.length) throw httpError('请至少选择 1 个口味商品')
+  const rows = await client.onlineProductProfile.findMany({ where: { mpId: { in: ids } }, select: { mpId: true, status: true, combo: true } })
+  const found = new Map(rows.map((row) => [row.mpId, row]))
+  const missing = ids.filter((id) => !found.has(id))
+  if (missing.length) throw httpError(`口味商品不存在：${missing.join('、')}`)
+  const nested = ids.filter((id) => found.get(id)?.combo)
+  if (nested.length) throw httpError(`口味不能是组合商品：${nested.join('、')}`)
+  const offline = ids.filter((id) => found.get(id)?.status !== 'ON')
+  if (offline.length) throw httpError(`口味商品未上架：${offline.join('、')}`)
+}
+
 export function productProfileData(body, { existing = null, item = null } = {}) {
   const status = String(body.status ?? existing?.status ?? 'DRAFT').toUpperCase()
   if (!ONLINE_CATALOG_STATUSES.includes(status)) throw httpError('状态只能是 DRAFT、ON 或 OFF')
@@ -155,6 +235,8 @@ export function productProfileData(body, { existing = null, item = null } = {}) 
     ? priceCentsFrom(body, '线上售价')
     : priceCentsFrom({ priceCents: existing?.priceCents ?? item?.salePriceCents ?? null }, '线上售价')
   if (status === 'ON' && (priceCents === null || priceCents <= 0n)) throw httpError('上架前请填写大于 0 的线上售价')
+  // 组合商品一旦建成，直接清空会让小程序端失去口味选择器；要停售请改用下架
+  if (body.combo === null && existing?.combo) throw httpError('组合商品不能直接取消组合，请改用下架')
   return {
     title: text(body.title !== undefined ? body.title : existing?.title || item?.name || '', 50, '线上标题', status === 'ON'),
     subtitle: text(body.subtitle !== undefined ? body.subtitle : existing?.subtitle || '', 80, '副标题'),
@@ -164,6 +246,12 @@ export function productProfileData(body, { existing = null, item = null } = {}) 
     shelfLife: text(body.shelfLife !== undefined ? body.shelfLife : existing?.shelfLife || '', 40, '保质期'),
     storage: text(body.storage !== undefined ? body.storage : existing?.storage || '', 40, '保存方式'),
     media: normalizeMedia(body.media !== undefined ? body.media : existing?.media || {}),
+    combo: body.combo !== undefined
+      ? normalizeComboInput(body.combo, {
+        priceCents: priceCents ?? existing?.combo?.unitPriceCent ?? null,
+        mpId: String(body.mpId ?? existing?.mpId ?? '').trim(),
+      })
+      : (existing?.combo ?? null),
     sortOrder: integer(body.sortOrder !== undefined ? body.sortOrder : existing?.sortOrder ?? 0, '排序'),
     status,
   }
@@ -418,9 +506,12 @@ onlineCatalogRouter.post('/online-catalog/products', wrap(async (req, res) => {
       shelfLife: body.shelfLife,
       storage: body.storage,
       media: body.media,
+      combo: body.combo,
+      mpId,
       sortOrder: body.sortOrder,
       status: body.status,
     }, { item })
+    if (data.combo) await assertComboFlavors(prisma, data.combo, mpId)
     const profile = await tx.onlineProductProfile.create({
       data: {
         id: `op-${crypto.randomUUID()}`,
@@ -431,20 +522,30 @@ onlineCatalogRouter.post('/online-catalog/products', wrap(async (req, res) => {
       },
       include: profileInclude,
     })
-    const externalSkuId = onlineSkuId(mpId)
-    await tx.onlineProductPolicy.upsert({
-      where: { namespace_externalProductId_externalSkuId: { namespace: ONLINE_CATALOG_NAMESPACE, externalProductId: mpId, externalSkuId } },
-      update: { productId: item.id, enabled: profile.status === 'ON', updatedById: req.user.id },
-      create: {
-        id: `opp-${crypto.randomUUID()}`,
-        namespace: ONLINE_CATALOG_NAMESPACE,
-        externalProductId: mpId,
-        externalSkuId,
+    if (data.combo) {
+      await syncComboPolicies(tx, {
+        mpId,
+        combo: data.combo,
         productId: item.id,
         enabled: profile.status === 'ON',
-        updatedById: req.user.id,
-      },
-    })
+        userId: req.user.id,
+      })
+    } else {
+      const externalSkuId = onlineSkuId(mpId)
+      await tx.onlineProductPolicy.upsert({
+        where: { namespace_externalProductId_externalSkuId: { namespace: ONLINE_CATALOG_NAMESPACE, externalProductId: mpId, externalSkuId } },
+        update: { productId: item.id, enabled: profile.status === 'ON', updatedById: req.user.id },
+        create: {
+          id: `opp-${crypto.randomUUID()}`,
+          namespace: ONLINE_CATALOG_NAMESPACE,
+          externalProductId: mpId,
+          externalSkuId,
+          productId: item.id,
+          enabled: profile.status === 'ON',
+          updatedById: req.user.id,
+        },
+      })
+    }
     return profile
   })
   res.status(201).json({ ok: true, product: await withDisplayMediaOne(serializeProfile(created)) })
@@ -462,6 +563,7 @@ onlineCatalogRouter.put('/online-catalog/products/:id', wrap(async (req, res) =>
     if (!category || !category.isActive) throw httpError('线上分类不存在或已停用', 409)
   }
   const data = productProfileData(body, { existing, item: existing.inventoryItem })
+  if (data.combo) await assertComboFlavors(prisma, data.combo, existing.mpId)
   if (data.status === 'ON' && existing.inventoryItem.isActive !== true) throw httpError('对应 OS 商品未启用，不能上架', 409)
   const updated = await prisma.$transaction(async (tx) => {
     const profile = await tx.onlineProductProfile.update({
@@ -477,6 +579,15 @@ onlineCatalogRouter.put('/online-catalog/products/:id', wrap(async (req, res) =>
       where: { namespace: ONLINE_CATALOG_NAMESPACE, externalProductId: existing.mpId },
       data: { enabled: profile.status === 'ON', productId: existing.inventoryItemId, updatedById: req.user.id },
     })
+    if (data.combo) {
+      await syncComboPolicies(tx, {
+        mpId: existing.mpId,
+        combo: data.combo,
+        productId: existing.inventoryItemId,
+        enabled: profile.status === 'ON',
+        userId: req.user.id,
+      })
+    }
     return profile
   })
   res.json({ ok: true, product: await withDisplayMediaOne(serializeProfile(updated)) })

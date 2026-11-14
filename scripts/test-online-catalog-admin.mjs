@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildProductDoc, createOnlineCatalogPublisher, checksum } from '../server/online-catalog-publisher.js'
-import { findImportItem, normalizeMedia, onlineSkuId, productProfileData } from '../server/online-catalog.js'
+import { assertComboFlavors, comboSkus, findImportItem, normalizeComboInput, normalizeMedia, onlineSkuId, productProfileData, syncComboPolicies } from '../server/online-catalog.js'
 import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
 import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
 
@@ -308,4 +308,68 @@ test('findImportItem 映射指向的商品已删除时继续按名称兜底', as
   }
   const item = await findImportItem(client, { id: 'x', name: '任意' })
   assert.equal(item.id, 'it-real')
+})
+
+
+// ---- 组合配置编辑（ONLINE-CATALOG-COMBO-003） ----
+
+test('normalizeComboInput 归一化并派生单盒价', () => {
+  const combo = normalizeComboInput({ slots: 4, repeat: true, flavorIds: ['b1', 'b2', 'b2', ' '] }, { priceCents: 29900n, mpId: 'bb' })
+  assert.deepEqual(combo, { slots: 4, repeat: true, flavorIds: ['b1', 'b2'], unitPriceCent: 29900 })
+})
+
+test('normalizeComboInput 拒绝非法组合配置', () => {
+  assert.throws(() => normalizeComboInput({ slots: 0, repeat: true, flavorIds: ['b1'] }, {}), /每盒口味数/)
+  assert.throws(() => normalizeComboInput({ slots: 2.5, repeat: true, flavorIds: ['b1'] }, {}), /每盒口味数/)
+  assert.throws(() => normalizeComboInput({ slots: 2, flavorIds: ['b1'] }, {}), /可否重复/)
+  assert.throws(() => normalizeComboInput({ slots: 1, repeat: true, flavorIds: [] }, {}), /至少要有 1 个/)
+  assert.throws(() => normalizeComboInput({ slots: 1, repeat: true, flavorIds: ['bb'] }, { mpId: 'bb' }), /不能把自己/)
+  assert.throws(() => normalizeComboInput({ slots: 3, repeat: false, flavorIds: ['b1', 'b2'] }, {}), /不能超过可选口味数量/)
+  assert.equal(normalizeComboInput(null), null)
+})
+
+test('assertComboFlavors 校验口味存在、已上架且不是组合商品', async () => {
+  const client = (rows) => ({ onlineProductProfile: { async findMany() { return rows } } })
+  const okRows = [{ mpId: 'b1', status: 'ON', combo: null }, { mpId: 'b2', status: 'ON', combo: null }]
+  await assertComboFlavors(client(okRows), { flavorIds: ['b1', 'b2'] }, 'bb')
+
+  await assert.rejects(() => assertComboFlavors(client([okRows[0]]), { flavorIds: ['b1', 'b9'] }, 'bb'), /不存在：b9/)
+  await assert.rejects(() => assertComboFlavors(client([{ mpId: 'b1', status: 'ON', combo: { slots: 4 } }]), { flavorIds: ['b1'] }, 'bb'), /不能是组合商品/)
+  await assert.rejects(() => assertComboFlavors(client([{ mpId: 'b1', status: 'OFF', combo: null }]), { flavorIds: ['b1'] }, 'bb'), /未上架/)
+})
+
+test('normalizeComboInput 拒绝自己作为口味（保存路径）', () => {
+  assert.throws(() => normalizeComboInput({ slots: 4, repeat: true, flavorIds: ['bb', 'b1'] }, { priceCents: 29900n, mpId: 'bb' }), /不能把自己/)
+})
+
+
+// ---- 组合 SKU 映射同步（ONLINE-CATALOG-COMBO-004） ----
+
+const BB_COMBO = { slots: 4, repeat: true, flavorIds: ['b1', 'b2', 'b3', 'b4', 'b5', 'b6'] }
+
+test('comboSkus 枚举出全部 126 种搭配且与结算侧同一套哈希', () => {
+  const skus = comboSkus('bb', BB_COMBO)
+  assert.equal(skus.length, 126)
+  assert.equal(new Set(skus).size, 126)
+  assert.ok(skus.includes(onlineSkuId('bb', ['b4', 'b3', 'b2', 'b1'])), '口味顺序不影响 SKU')
+})
+
+test('syncComboPolicies 建全量映射、停用过期搭配', async () => {
+  const calls = { created: [], enabled: null, disabled: null }
+  const tx = {
+    onlineProductPolicy: {
+      async createMany({ data }) { calls.created = data },
+      async updateMany({ where, data }) {
+        if (where.externalSkuId && where.externalSkuId.notIn) calls.disabled = { where, data }
+        else calls.enabled = { where, data }
+      },
+    },
+  }
+  const count = await syncComboPolicies(tx, { mpId: 'bb', combo: BB_COMBO, productId: 'it-balls', enabled: true, userId: 'u1' })
+  assert.equal(count, 126)
+  assert.equal(calls.created.length, 126)
+  assert.equal(calls.created[0].productId, 'it-balls')
+  assert.equal(calls.created[0].enabled, true)
+  assert.equal(calls.created[0].externalProductId, 'bb')
+  assert.equal(calls.disabled.data.enabled, false, '不在新集合里的旧搭配必须停用')
 })

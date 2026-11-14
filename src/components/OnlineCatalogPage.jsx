@@ -189,6 +189,15 @@ export default function OnlineCatalogPage() {
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
 
+  const updateCombo = (patch) => setForm((current) => (current ? { ...current, combo: { ...(current.combo || {}), ...patch } } : current))
+
+  const toggleComboFlavor = (mpId) => setForm((current) => {
+    if (!current?.combo) return current
+    const ids = current.combo.flavorIds || []
+    const flavorIds = ids.includes(mpId) ? ids.filter((id) => id !== mpId) : [...ids, mpId]
+    return { ...current, combo: { ...current.combo, flavorIds } }
+  })
+
   // 新上传的图片本身是 data:/https（可直接渲染），历史档案回退到后端解析出的 mediaDisplay
   const formDisplay = (key, index = 0) => {
     const raw = key === 'cover' ? form?.media?.cover : (form?.media?.[key] || [])[index]
@@ -273,6 +282,25 @@ export default function OnlineCatalogPage() {
     setBusy(true)
     setError('')
     setNotice('')
+    if (form.combo) {
+      const slots = Number(form.combo.slots)
+      const flavors = form.combo.flavorIds || []
+      if (!Number.isInteger(slots) || slots < 1) {
+        setError('每盒口味数必须是大于 0 的整数')
+        setBusy(false)
+        return
+      }
+      if (!flavors.length) {
+        setError('请至少选择 1 个可选口味')
+        setBusy(false)
+        return
+      }
+      if (!form.combo.repeat && slots > flavors.length) {
+        setError('不允许重复选口味时，每盒口味数不能超过已选口味数量')
+        setBusy(false)
+        return
+      }
+    }
     try {
       const payload = {
         onlineCategoryId: form.onlineCategoryId,
@@ -287,6 +315,7 @@ export default function OnlineCatalogPage() {
         sortOrder: form.sortOrder,
         status: form.status,
         media: form.media,
+        ...(form.combo ? { combo: { slots: Number(form.combo.slots), repeat: form.combo.repeat === true, flavorIds: form.combo.flavorIds || [] } } : {}),
       }
       if (form.mode === 'edit') {
         await api(`/v2/online-catalog/products/${form.id}`, { method: 'PUT', body: JSON.stringify(payload) })
@@ -566,10 +595,50 @@ export default function OnlineCatalogPage() {
             </div>
 
             {form.combo ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
-                组合商品：{form.combo.slots ?? '?'} 款自由搭配{form.combo.repeat ? '（可重复选同款）' : ''}，
-                口味范围 {(form.combo.flavorIds || []).join(' / ') || '—'} 由 POS 侧维护，本页不改动。
-                发布时原样保留组合结构，只更新价格、文案和图片。
+              <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-amber-800">组合商品设置</span>
+                  <span className="text-[11px] text-amber-600">发布后写入小程序；单盒价跟随「线上价」自动同步</span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Field label="每盒口味数">
+                    <input
+                      type="number"
+                      min="1"
+                      max="12"
+                      className={inputClass}
+                      value={form.combo.slots ?? ''}
+                      onChange={(event) => updateCombo({ slots: event.target.value === '' ? '' : Number(event.target.value) })}
+                    />
+                  </Field>
+                  <Field label="是否允许重复选同一口味">
+                    <label className="flex h-[38px] items-center gap-2 text-sm text-slate-600">
+                      <input type="checkbox" checked={form.combo.repeat === true} onChange={(event) => updateCombo({ repeat: event.target.checked })} />
+                      允许重复（如 4 颗全选同一口味）
+                    </label>
+                  </Field>
+                </div>
+                <div className="mt-2">
+                  <div className="text-[11px] font-medium text-slate-500">
+                    可选口味（已选 {(form.combo.flavorIds || []).length}）
+                  </div>
+                  <div className="mt-1 flex max-h-36 flex-wrap gap-1.5 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2">
+                    {products.filter((item) => item.mpId !== form.mpId && !item.combo).map((item) => {
+                      const checked = (form.combo.flavorIds || []).includes(item.mpId)
+                      return (
+                        <button
+                          key={item.mpId}
+                          type="button"
+                          onClick={() => toggleComboFlavor(item.mpId)}
+                          className={`rounded-full border px-2 py-0.5 text-[11px] transition ${checked ? 'border-amber-400 bg-amber-100 text-amber-800' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}
+                        >
+                          {item.title || item.mpId}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-400">只有已上架、非组合的商品可以作为口味。</div>
+                </div>
               </div>
             ) : null}
 
