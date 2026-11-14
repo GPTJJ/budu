@@ -648,6 +648,167 @@ onlineCatalogRouter.post('/online-catalog/orders/:id/fulfill', wrap(async (req, 
   })
 }))
 
+// ---------------- 售后（P2，只读台账） ----------------
+
+const REFUND_STATE_LABEL = { PENDING: '处理中', SETTLED: '已到账', FAILED: '失败' }
+
+function serializeRefundRow(row) {
+  return {
+    id: row.id,
+    orderId: row.settlementId,
+    orderNo: row.settlement?.externalOrderId || row.settlementId,
+    customer: {
+      name: row.settlement?.user?.displayName
+        || (row.settlement?.user?.username?.startsWith('wx_') ? `顾客 ${String(row.settlement.user.username).slice(-4)}` : (row.settlement?.user?.username || '顾客')),
+    },
+    status: row.status,
+    statusLabel: REFUND_STATE_LABEL[row.status] || row.status,
+    totalCents: String(row.totalCents),
+    wechatCents: String(row.wechatCents || 0),
+    sweetCardCents: String(row.sweetCardCents || 0),
+    reason: row.approvalReason || '',
+    sequence: row.sequence,
+    createdAt: row.createdAt,
+  }
+}
+
+onlineCatalogRouter.get('/online-catalog/refunds', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const status = text(req.query.status, 20, '状态')
+  const rows = await prisma.onlineRefund.findMany({
+    where: status ? { status } : undefined,
+    include: {
+      settlement: { select: { externalOrderId: true, totalCents: true, user: { select: { displayName: true, username: true } } } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 200,
+  })
+  const settled = rows.filter((row) => row.status === 'SETTLED').length
+  const totalCents = rows.reduce((sum, row) => sum + Number(row.totalCents || 0), 0)
+  res.json({
+    ok: true,
+    total: rows.length,
+    settled,
+    totalCents: String(totalCents),
+    refunds: rows.map(serializeRefundRow),
+  })
+}))
+
+onlineCatalogRouter.get('/online-catalog/refunds/:id', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const row = await prisma.onlineRefund.findUnique({
+    where: { id: String(req.params.id) },
+    include: {
+      settlement: {
+        select: {
+          id: true, externalOrderId: true, totalCents: true, paidAt: true, status: true,
+          user: { select: { displayName: true, username: true } },
+          quote: { select: { snapshot: true } },
+          tenders: true,
+        },
+      },
+    },
+  })
+  if (!row) throw httpError('退款记录不存在', 404)
+  const summary = serializeRefundRow(row)
+  const snapshotLines = Array.isArray(row.settlement?.quote?.snapshot?.lines) ? row.settlement.quote.snapshot.lines : []
+  res.json({
+    ok: true,
+    refund: {
+      ...summary,
+      eligibleCents: String(row.eligibleCents),
+      ineligibleCents: String(row.ineligibleCents),
+      shippingCents: String(row.shippingCents),
+      paidAt: row.settlement?.paidAt || null,
+      orderTotalCents: String(row.settlement?.totalCents || 0),
+      tenders: (row.settlement?.tenders || []).map((tender) => ({
+        type: tender.type,
+        label: TENDER_LABEL[tender.type] || tender.type,
+        status: tender.status,
+        amountCents: String(tender.amountCents),
+      })),
+      lines: snapshotLines.map((line) => ({
+        name: String(line.name || line.productId || '商品'),
+        spec: String(line.spec || ''),
+        quantity: Number(line.quantity) || 0,
+        amountCents: String(line.lineAmountCents ?? line.unitPriceCents ?? '0'),
+      })),
+    },
+  })
+}))
+
+// ---------------- 数据（P2，只读聚合） ----------------
+
+onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireCatalogManager(req.user)
+  const days = integer(req.query.days, '统计天数', { min: 7, max: 90, fallback: 30 })
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+
+  const rows = await prisma.onlineSettlement.findMany({
+    where: { createdAt: { gte: since } },
+    include: { quote: { select: { snapshot: true } }, refunds: { select: { totalCents: true, status: true } } },
+    orderBy: { createdAt: 'asc' },
+    take: 500,
+  })
+
+  const buckets = new Map()
+  const products = new Map()
+  let paidCents = 0
+  let paidOrders = 0
+  let refundCents = 0
+  let cancelled = 0
+
+  for (const row of rows) {
+    const day = new Date(row.createdAt).toISOString().slice(0, 10)
+    if (!buckets.has(day)) buckets.set(day, { date: day, orders: 0, paidCents: 0 })
+    const bucket = buckets.get(day)
+    bucket.orders += 1
+    if (row.status === 'CANCELLED') cancelled += 1
+    if (row.paidAt) {
+      paidOrders += 1
+      const amount = Number(row.totalCents || 0)
+      const refunded = Number(row.status === 'REFUNDED' ? amount : 0)
+      const net = amount - refunded
+      paidCents += net
+      bucket.paidCents += net
+    }
+    refundCents += (row.refunds || []).reduce((sum, refund) => sum + Number(refund.totalCents || 0), 0)
+
+    const lines = Array.isArray(row.quote?.snapshot?.lines) ? row.quote.snapshot.lines : []
+    for (const line of lines) {
+      const key = String(line.productId || line.skuId || line.name || 'unknown')
+      if (!products.has(key)) products.set(key, { id: key, name: String(line.name || key), quantity: 0, amountCents: 0, orders: 0 })
+      const target = products.get(key)
+      target.quantity += Number(line.quantity) || 0
+      target.amountCents += Number(line.lineAmountCents ?? line.unitPriceCents ?? 0)
+      target.orders += 1
+    }
+  }
+
+  const series = [...buckets.values()].sort((a, b) => a.date.localeCompare(b.date))
+  const top = [...products.values()].sort((a, b) => b.amountCents - a.amountCents).slice(0, 10)
+
+  res.json({
+    ok: true,
+    days,
+    generatedAt: new Date().toISOString(),
+    totals: {
+      orders: rows.length,
+      paidOrders,
+      cancelled,
+      paidCents,
+      refundCents,
+      refundRate: rows.length ? Math.round(((rows.length - paidOrders) / rows.length) * 1000) / 10 : 0,
+      avgOrderCents: paidOrders ? Math.round(paidCents / paidOrders) : 0,
+    },
+    series,
+    top,
+  })
+}))
+
 onlineCatalogRouter.get('/online-catalog/categories', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireCatalogManager(req.user)

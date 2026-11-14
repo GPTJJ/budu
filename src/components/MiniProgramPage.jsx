@@ -15,6 +15,8 @@ import { api } from '../utils/api'
 import { formatCents } from '../utils/pos'
 import OnlineCatalogPage from './OnlineCatalogPage'
 import OnlineOrderBoard from './OnlineOrderBoard'
+import AfterSalesBoard from './AfterSalesBoard'
+import AnalyticsBoard from './AnalyticsBoard'
 
 /**
  * 小程序管理台外壳（BUDU-MP-CONSOLE-001 / P0）
@@ -60,11 +62,11 @@ const MODULES = [
     key: 'after-sales',
     label: '售后',
     icon: RotateCcw,
-    desc: '退款与退货统一审核',
+    desc: '退款台账与对账：可查历史退款、金额与原因；发起退款待开放',
     views: [
-      { key: 'after-sales', label: '退款申请' },
-      { key: 'after-sales-return', label: '退货退款' },
-      { key: 'after-sales-log', label: '售后记录' },
+      { key: 'after-sales', label: '退款记录', state: '' },
+      { key: 'after-sales-pending', label: '处理中', state: 'PENDING' },
+      { key: 'after-sales-settled', label: '已到账', state: 'SETTLED' },
     ],
   },
   {
@@ -238,10 +240,10 @@ function Overview({ onGo }) {
             </li>
             <li className="flex items-center justify-between px-4 py-3">
               <div>
-                <div className="text-slate-700">售后审核</div>
-                <div className="mt-0.5 text-[11px] text-slate-400">P2 · 复用 createOnlineRefund</div>
+                <div className="text-slate-700">售后台账 / 交易分析</div>
+                <div className="mt-0.5 text-[11px] text-slate-400">P2 · 已上线（只读）</div>
               </div>
-              <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">待建</span>
+              <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">已完成</span>
             </li>
             <li className="flex items-center justify-between px-4 py-3">
               <div>
@@ -352,8 +354,12 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
           {(moduleKey === 'orders' || moduleKey === 'shipments') && view.state !== 'ISSUE' ? (
             <OnlineOrderBoard key={viewKey} initialState={view.state || ''} title={view.label} showFilters={moduleKey === 'orders'} />
           ) : null}
+          {moduleKey === 'after-sales' ? <AfterSalesBoard key={viewKey} initialState={view.state || ''} /> : null}
+          {moduleKey === 'data' && viewKey === 'data-trade' ? <AnalyticsBoard key={viewKey} /> : null}
           {moduleKey === 'shipments' && view.state === 'ISSUE' ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
-          {moduleKey !== 'overview' && moduleKey !== 'orders' && moduleKey !== 'shipments' && viewKey !== 'products' ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
+          {moduleKey !== 'overview' && moduleKey !== 'orders' && moduleKey !== 'shipments' && moduleKey !== 'after-sales'
+            && !(moduleKey === 'data' && viewKey === 'data-trade') && viewKey !== 'products'
+            ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
         </div>
       </main>
     </div>
