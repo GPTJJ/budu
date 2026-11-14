@@ -15,7 +15,8 @@ import { prisma, dbReady } from './pg.js'
 import { httpError, parseCents } from './pos-core.js'
 import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
 import { getOnlineCatalogPublisher, buildProductDoc } from './online-catalog-publisher.js'
-import { withDisplayMedia, withDisplayMediaOne } from './online-catalog-media.js'
+import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls } from './online-catalog-media.js'
+import { uploadCatalogImage } from './online-catalog-upload.js'
 
 export const ONLINE_CATALOG_NAMESPACE = 'cloudbase-miniprogram'
 export const ONLINE_CATALOG_STATUSES = ['DRAFT', 'ON', 'OFF']
@@ -270,6 +271,14 @@ onlineCatalogRouter.get('/online-catalog/status', wrap(async (req, res) => {
     },
     counts: { categories, products },
   })
+}))
+
+// 图片先入云存储，档案里只存 cloud:// 文件 ID（不再把 base64 写进库）
+onlineCatalogRouter.post('/online-catalog/uploads', wrap(async (req, res) => {
+  requireCatalogManager(req.user)
+  const { fileId, cloudPath, size } = await uploadCatalogImage(req.body && req.body.data)
+  const lookup = await resolveTempUrls([fileId])
+  res.status(201).json({ ok: true, fileId, cloudPath, size, url: lookup[fileId] || '' })
 }))
 
 onlineCatalogRouter.get('/online-catalog/categories', wrap(async (req, res) => {

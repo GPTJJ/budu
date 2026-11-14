@@ -93,6 +93,7 @@ export default function OnlineCatalogPage() {
   const [items, setItems] = useState([])
   const [itemQuery, setItemQuery] = useState('')
   const [busy, setBusy] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [cloudbaseConfigured, setCloudbaseConfigured] = useState(null)
   const [previewDoc, setPreviewDoc] = useState(null)
 
@@ -195,34 +196,58 @@ export default function OnlineCatalogPage() {
     return key === 'cover' ? (display.cover || '') : (display[key]?.[index] || '')
   }
 
+  // 浏览器先压缩，再交给服务端上传云存储，库里只留下 cloud:// 文件 ID
+  const uploadImage = async (file) => {
+    const dataUrl = await compressProductImage(file)
+    const result = await api('/v2/online-catalog/uploads', { method: 'POST', body: JSON.stringify({ data: dataUrl }) })
+    return { fileId: result.fileId, url: result.url || '' }
+  }
+
   const onCover = async (file) => {
     if (!file) return
+    setUploading(true)
     try {
-      const cover = await compressProductImage(file)
-      setForm((current) => ({ ...current, media: { ...(current.media || {}), cover } }))
+      const { fileId, url } = await uploadImage(file)
+      setForm((current) => ({
+        ...current,
+        media: { ...(current.media || {}), cover: fileId },
+        displayMedia: { ...(current.displayMedia || {}), cover: url },
+      }))
       setError('')
     } catch (err) {
-      setError(err.message || '图片处理失败')
+      setError(err.message || '图片上传失败')
+    } finally {
+      setUploading(false)
     }
   }
 
   const onMediaFiles = async (files, key) => {
     const limit = key === 'gallery' ? 9 : 20
-    const selected = Array.from(files || []).slice(0, limit)
+    const selected = Array.from(files || [])
     if (!selected.length) return
+    const current = (form?.media || {})[key] || []
+    if (current.length >= limit) {
+      setError(`${key === 'gallery' ? '轮播图' : '详情图'}最多 ${limit} 张`)
+      return
+    }
+    setUploading(true)
     try {
-      const urls = []
-      for (const file of selected) urls.push(await compressProductImage(file))
-      setForm((current) => ({
-        ...current,
-        media: {
-          ...(current.media || {}),
-          [key]: [...((current.media || {})[key] || []), ...urls].slice(0, limit),
-        },
+      const uploaded = []
+      for (const file of selected) {
+        if (current.length + uploaded.length >= limit) break
+        uploaded.push(await uploadImage(file))
+      }
+      if (!uploaded.length) return
+      setForm((state) => ({
+        ...state,
+        media: { ...(state.media || {}), [key]: [...((state.media || {})[key] || []), ...uploaded.map((item) => item.fileId)].slice(0, limit) },
+        displayMedia: { ...(state.displayMedia || {}), [key]: [...((state.displayMedia || {})[key] || []), ...uploaded.map((item) => item.url)].slice(0, limit) },
       }))
       setError('')
     } catch (err) {
-      setError(err.message || '图片处理失败')
+      setError(err.message || '图片上传失败')
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -230,6 +255,15 @@ export default function OnlineCatalogPage() {
     setForm((current) => ({
       ...current,
       media: { ...(current.media || {}), [key]: ((current.media || {})[key] || []).filter((_, i) => i !== index) },
+      displayMedia: { ...(current.displayMedia || {}), [key]: ((current.displayMedia || {})[key] || []).filter((_, i) => i !== index) },
+    }))
+  }
+
+  const removeCover = () => {
+    setForm((current) => ({
+      ...current,
+      media: { ...(current.media || {}), cover: '' },
+      displayMedia: { ...(current.displayMedia || {}), cover: '' },
     }))
   }
 
@@ -522,7 +556,7 @@ export default function OnlineCatalogPage() {
                   <option value="OFF">下架</option>
                 </select>
               </Field>
-              <Field label="封面图" hint="建议 1:1，压缩后小于 600KB">
+              <Field label="封面图" hint={uploading ? '图片上传中…' : '建议 1:1；上传后存云存储，不再写入数据库'}>
                 <input type="file" accept="image/*" className="block w-full text-xs text-slate-500" onChange={(event) => onCover(event.target.files?.[0])} />
               </Field>
             </div>
@@ -530,7 +564,7 @@ export default function OnlineCatalogPage() {
             {form.media?.cover ? (
               <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-2">
                 <MediaThumb src={formDisplay('cover')} className="h-16 w-16" rounded="rounded-lg" emptyLabel="云端图" />
-                <button type="button" className="text-xs text-rose-500" onClick={() => update('media', { ...(form.media || {}), cover: '' })}>移除封面</button>
+                <button type="button" className="text-xs text-rose-500" onClick={removeCover}>移除封面</button>
               </div>
             ) : null}
 
@@ -567,7 +601,7 @@ export default function OnlineCatalogPage() {
 
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
               <button type="button" className="rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600" onClick={() => setForm(null)}>取消</button>
-              <button type="button" className="rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={save} disabled={busy}>保存</button>
+              <button type="button" className="rounded-xl bg-budu-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={save} disabled={busy || uploading}>{uploading ? '上传中…' : '保存'}</button>
             </div>
           </div>
         </Modal>

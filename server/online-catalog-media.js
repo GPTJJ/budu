@@ -97,6 +97,22 @@ function trimCache() {
   }
 }
 
+/** 供上传等场景复用同一个 CloudBase 客户端（未配置/初始化失败返回 null） */
+export async function getCloudBaseClient() {
+  try {
+    return await getClient()
+  } catch {
+    return null
+  }
+}
+
+/** 批量把 cloud:// 换成临时 https（上传后即时预览用） */
+export async function resolveTempUrls(fileIds) {
+  const list = (Array.isArray(fileIds) ? fileIds : [fileIds]).filter(isCloudFileId)
+  if (!list.length) return {}
+  return resolveCloudFileIds(list)
+}
+
 async function resolveCloudFileIds(fileIds) {
   const now = Date.now()
   const result = {}

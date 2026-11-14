@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { buildProductDoc, createOnlineCatalogPublisher, checksum } from '../server/online-catalog-publisher.js'
 import { normalizeMedia, onlineSkuId, productProfileData } from '../server/online-catalog.js'
 import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
+import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
 
 const category = { name: '生巧克力', meta: { color: '#A13966', sub: '手工生巧' } }
 const item = { name: '新商品', unit: '盒', spec: '100g/盒', salePriceCents: 13800n }
@@ -201,4 +202,48 @@ test('media: 云存储不可用时降级为空串而不是抛错', async () => {
   const [row] = await withDisplayMedia([{ id: 'p', media: { cover: 'cloud://env.bucket/x.jpg' } }])
   assert.equal(row.mediaDisplay.cover, '')
   __resetMediaResolverForTest()
+})
+
+
+// ---- 图片上传（改为云存储，库里只存 cloud://） ----
+
+const PNG_1PX = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
+test('upload: 解析 data URL 并校验真实文件头', () => {
+  const parsed = parseImageDataUrl(PNG_1PX)
+  assert.equal(parsed.ext, 'png')
+  assert.ok(parsed.buffer.length > 0)
+})
+
+test('upload: 拒绝非图片、伪装图片与超大文件', () => {
+  assert.throws(() => parseImageDataUrl('not-a-data-url'), /图片格式不支持/)
+  assert.throws(() => parseImageDataUrl('data:text/html;base64,PGgxPg=='), /只支持 JPG/)
+  const fakeJpeg = `data:image/jpeg;base64,${Buffer.from('hello').toString('base64')}`
+  assert.throws(() => parseImageDataUrl(fakeJpeg), /不是有效图片/)
+  assert.throws(() => parseImageDataUrl(PNG_1PX, { maxBytes: 10 }), /图片过大/)
+})
+
+test('upload: 云路径按月分目录且文件名不可预测', () => {
+  const path = buildCloudPath('jpg', new Date('2026-11-14T10:00:00Z'))
+  assert.match(path, /^online-catalog\/media\/202611\/[0-9a-f-]{36}\.jpg$/)
+  assert.notEqual(path, buildCloudPath('jpg', new Date('2026-11-14T10:00:00Z')))
+})
+
+test('upload: 成功时把文件写进云存储并返回 fileID', async () => {
+  const calls = []
+  const client = {
+    async uploadFile(payload) {
+      calls.push(payload)
+      return { fileID: `cloud://env.bucket/${payload.cloudPath}` }
+    },
+  }
+  const result = await uploadCatalogImage(PNG_1PX, { client })
+  assert.match(result.fileId, /^cloud:\/\/env\.bucket\/online-catalog\/media\/\d{6}\/[0-9a-f-]{36}\.png$/)
+  assert.equal(calls.length, 1)
+  assert.ok(calls[0].fileContent.length > 0)
+})
+
+test('upload: 云存储异常或无 fileID 时报错而不是静默成功', async () => {
+  await assert.rejects(() => uploadCatalogImage(PNG_1PX, { client: { async uploadFile() { throw new Error('COS down') } } }), /图片上传失败/)
+  await assert.rejects(() => uploadCatalogImage(PNG_1PX, { client: { async uploadFile() { return {} } } }), /未返回文件标识/)
 })
