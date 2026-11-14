@@ -43,9 +43,26 @@ function Field({ label, children, hint }) {
 
 const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-budu-400 focus:ring-2 focus:ring-budu-100'
 
+// 后端已把 cloud:// 换成临时链接、把 /images/* 映射到 /mp-images/*，这里只取展示值。
 function mediaPreview(product) {
-  const value = product.media?.cover || product.media?.gallery?.[0] || ''
-  return value && !String(value).startsWith('cloud://') ? value : ''
+  const display = product?.mediaDisplay || {}
+  return display.cover || display.gallery?.[0] || ''
+}
+
+const DIRECT_SRC = /^(data:image\/|https?:\/\/)/i
+
+function MediaThumb({ src, alt = '', className = 'h-14 w-14', rounded = 'rounded-xl', emptyLabel = '无预览', textClass = 'text-[10px]' }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => { setFailed(false) }, [src])
+  return (
+    <div className={`${className} overflow-hidden ${rounded} bg-slate-100`}>
+      {src && !failed ? (
+        <img src={src} alt={alt} className="h-full w-full object-cover" onError={() => setFailed(true)} />
+      ) : (
+        <div className={`grid h-full w-full place-items-center ${textClass} text-slate-400`}>{emptyLabel}</div>
+      )}
+    </div>
+  )
 }
 
 function Modal({ title, children, onClose, wide = false }) {
@@ -149,6 +166,7 @@ export default function OnlineCatalogPage() {
       sortOrder: product.sortOrder,
       status: product.status,
       media: product.media || { cover: '', gallery: [], detail: [] },
+      displayMedia: product.mediaDisplay || { cover: '', gallery: [], detail: [] },
     })
   }
 
@@ -168,6 +186,14 @@ export default function OnlineCatalogPage() {
   }
 
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+
+  // 新上传的图片本身是 data:/https（可直接渲染），历史档案回退到后端解析出的 mediaDisplay
+  const formDisplay = (key, index = 0) => {
+    const raw = key === 'cover' ? form?.media?.cover : (form?.media?.[key] || [])[index]
+    if (typeof raw === 'string' && DIRECT_SRC.test(raw)) return raw
+    const display = form?.displayMedia || {}
+    return key === 'cover' ? (display.cover || '') : (display[key]?.[index] || '')
+  }
 
   const onCover = async (file) => {
     if (!file) return
@@ -399,12 +425,8 @@ export default function OnlineCatalogPage() {
             </div>
             {visible.map((product) => (
               <div key={product.id} className="grid grid-cols-1 gap-3 border-b border-slate-100 px-4 py-3 last:border-0 md:grid-cols-[64px_1.6fr_1fr_100px_100px_170px] md:items-center">
-                <div className="h-14 w-14 overflow-hidden rounded-xl bg-slate-100">
-                  {mediaPreview(product) ? (
-                    <img src={mediaPreview(product)} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="grid h-full w-full place-items-center text-[10px] text-slate-400">无预览</div>
-                  )}
+                <div className="h-14 w-14">
+                  <MediaThumb src={mediaPreview(product)} />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -507,7 +529,7 @@ export default function OnlineCatalogPage() {
 
             {form.media?.cover ? (
               <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-2">
-                <img src={form.media.cover} alt="" className="h-16 w-16 rounded-lg object-cover" />
+                <MediaThumb src={formDisplay('cover')} className="h-16 w-16" rounded="rounded-lg" emptyLabel="云端图" />
                 <button type="button" className="text-xs text-rose-500" onClick={() => update('media', { ...(form.media || {}), cover: '' })}>移除封面</button>
               </div>
             ) : null}
@@ -526,13 +548,15 @@ export default function OnlineCatalogPage() {
                 <div key={key} className="rounded-xl border border-slate-200 p-2">
                   <div className="mb-1 text-[11px] text-slate-400">{key === 'gallery' ? '轮播图' : '详情图'}（{form.media[key].length}）</div>
                   <div className="flex flex-wrap gap-2">
-                    {form.media[key].map((src, index) => (
+                    {form.media[key].map((_, index) => (
                       <div key={`${key}-${index}`} className="relative h-16 w-16 overflow-hidden rounded-lg bg-slate-100">
-                        {String(src).startsWith('cloud://') ? (
-                          <div className="grid h-full w-full place-items-center text-[10px] text-slate-400">已上传</div>
-                        ) : (
-                          <img src={src} alt="" className="h-full w-full object-cover" />
-                        )}
+                        <MediaThumb
+                          src={formDisplay(key, index)}
+                          className="h-16 w-16"
+                          rounded="rounded-lg"
+                          emptyLabel="已上传"
+                          textClass="text-[10px]"
+                        />
                         <button type="button" className="absolute right-0 top-0 rounded-bl bg-slate-900/60 px-1 text-[10px] text-white" onClick={() => removeMedia(key, index)}>×</button>
                       </div>
                     ))}

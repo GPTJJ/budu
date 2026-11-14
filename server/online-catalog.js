@@ -15,6 +15,7 @@ import { prisma, dbReady } from './pg.js'
 import { httpError, parseCents } from './pos-core.js'
 import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
 import { getOnlineCatalogPublisher, buildProductDoc } from './online-catalog-publisher.js'
+import { withDisplayMedia, withDisplayMediaOne } from './online-catalog-media.js'
 
 export const ONLINE_CATALOG_NAMESPACE = 'cloudbase-miniprogram'
 export const ONLINE_CATALOG_STATUSES = ['DRAFT', 'ON', 'OFF']
@@ -337,7 +338,7 @@ onlineCatalogRouter.get('/online-catalog/products', wrap(async (req, res) => {
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
   })
   products.sort((a, b) => ((a.category?.sortOrder ?? 999999) - (b.category?.sortOrder ?? 999999)) || (a.sortOrder - b.sortOrder))
-  res.json({ ok: true, products: products.map(serializeProfile) })
+  res.json({ ok: true, products: await withDisplayMedia(products.map(serializeProfile)) })
 }))
 
 onlineCatalogRouter.post('/online-catalog/products', wrap(async (req, res) => {
@@ -420,7 +421,7 @@ onlineCatalogRouter.post('/online-catalog/products', wrap(async (req, res) => {
     })
     return profile
   })
-  res.status(201).json({ ok: true, product: serializeProfile(created) })
+  res.status(201).json({ ok: true, product: await withDisplayMediaOne(serializeProfile(created)) })
 }))
 
 onlineCatalogRouter.put('/online-catalog/products/:id', wrap(async (req, res) => {
@@ -452,7 +453,7 @@ onlineCatalogRouter.put('/online-catalog/products/:id', wrap(async (req, res) =>
     })
     return profile
   })
-  res.json({ ok: true, product: serializeProfile(updated) })
+  res.json({ ok: true, product: await withDisplayMediaOne(serializeProfile(updated)) })
 }))
 
 onlineCatalogRouter.get('/online-catalog/products/:id/preview', wrap(async (req, res) => {

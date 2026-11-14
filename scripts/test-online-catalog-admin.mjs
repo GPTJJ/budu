@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildProductDoc, createOnlineCatalogPublisher, checksum } from '../server/online-catalog-publisher.js'
 import { normalizeMedia, onlineSkuId, productProfileData } from '../server/online-catalog.js'
+import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
 
 const category = { name: '生巧克力', meta: { color: '#A13966', sub: '手工生巧' } }
 const item = { name: '新商品', unit: '盒', spec: '100g/盒', salePriceCents: 13800n }
@@ -153,4 +154,51 @@ test('productProfileData treats an empty price field as “not provided”', () 
     { existing: { title: '旧标题', priceCents: 990n }, item: { name: 'x', salePriceCents: 1250n } },
   )
   assert.equal(edited.priceCents, 990n, '编辑时空白线上价应保留原值')
+})
+
+
+// ---- 首页/列表图片展示（ONLINE-CATALOG-MEDIA-001） ----
+
+test('media: 小程序包内路径映射到 OS 镜像目录且拒绝路径穿越', () => {
+  assert.equal(packageImageMirror('/images/c1.jpg'), '/mp-images/c1.jpg')
+  assert.equal(packageImageMirror('/images/..%2fsecret.jpg'), '')
+  assert.equal(packageImageMirror('/images/a/b.jpg'), '')
+  assert.equal(packageImageMirror('https://cdn/a.jpg'), '')
+  assert.equal(packageImageMirror(''), '')
+})
+
+test('media: 只有 cloud:// 需要解析，data:/https 原样可用', () => {
+  assert.equal(classifyMediaValue('cloud://env.bucket/a.jpg'), 'cloud')
+  assert.equal(classifyMediaValue('/images/s1.jpg'), 'package')
+  assert.equal(classifyMediaValue('data:image/jpeg;base64,AAA'), 'inline')
+  assert.equal(displayValue('cloud://env.bucket/a.jpg', {}), '')
+  assert.equal(displayValue('cloud://env.bucket/a.jpg', { 'cloud://env.bucket/a.jpg': 'https://temp/a.jpg' }), 'https://temp/a.jpg')
+  assert.equal(displayValue('/images/s1.jpg', {}), '/mp-images/s1.jpg')
+  assert.equal(displayValue('https://cdn/a.jpg', {}), 'https://cdn/a.jpg')
+})
+
+test('media: 批量解析 cloud:// 且不污染原始 media，结果命中缓存', async () => {
+  const calls = []
+  __resetMediaResolverForTest(() => ({
+    async getTempFileURL({ fileList }) {
+      calls.push(fileList)
+      return { fileList: fileList.map((id) => ({ fileID: id, code: 'SUCCESS', tempFileURL: `https://temp/${id.split('/').pop()}` })) }
+    },
+  }))
+  const media = { cover: 'cloud://env.bucket/c1/cover.jpg', gallery: ['/images/c1.jpg', 'cloud://env.bucket/c1/g1.jpg'], detail: [] }
+  const [row] = await withDisplayMedia([{ id: 'p1', media }])
+  assert.equal(row.mediaDisplay.cover, 'https://temp/cover.jpg')
+  assert.deepEqual(row.media, media, '原始 media 必须保持 cloud:// 原值')
+  assert.equal(row.mediaDisplay.gallery[0], '/mp-images/c1.jpg')
+  assert.equal(row.mediaDisplay.gallery[1], 'https://temp/g1.jpg')
+  await withDisplayMedia([{ id: 'p1', media }])
+  assert.equal(calls.length, 1, '第二次应命中缓存，不再请求云存储')
+  __resetMediaResolverForTest()
+})
+
+test('media: 云存储不可用时降级为空串而不是抛错', async () => {
+  __resetMediaResolverForTest(() => ({ async getTempFileURL() { throw new Error('Access Denied') } }))
+  const [row] = await withDisplayMedia([{ id: 'p', media: { cover: 'cloud://env.bucket/x.jpg' } }])
+  assert.equal(row.mediaDisplay.cover, '')
+  __resetMediaResolverForTest()
 })
