@@ -777,8 +777,6 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
       paidCents += net
       grossCents += amount
       if (row.status === 'REFUNDED') refundedOrders += 1
-      grossCents += amount
-      if (row.status === 'REFUNDED') refundedOrders += 1
       bucket.paidCents += net
     }
     refundCents += (row.refunds || []).reduce((sum, refund) => sum + Number(refund.totalCents || 0), 0)
