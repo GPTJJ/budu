@@ -31,7 +31,15 @@ export function checksum(value) {
   return crypto.createHash('sha256').update(JSON.stringify(stable(value))).digest('hex')
 }
 
-export function buildProductDoc({ profile, category, item }) {
+/** 组合商品：保留口味槽位定义；若已声明单盒价，则跟随线上价一起更新 */
+export function normalizeCombo(value, unitPriceCent) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const combo = { ...value }
+  if ('unitPriceCent' in combo) combo.unitPriceCent = unitPriceCent
+  return combo
+}
+
+export function buildProductDoc({ profile, category, item, combo = null }) {
   if (!profile?.mpId) throw httpError('缺少小程序商品 ID', 409)
   if (!category?.name) throw httpError('缺少线上分类', 409)
   const price = profile.priceCents !== null && profile.priceCents !== undefined ? profile.priceCents : item?.salePriceCents
@@ -51,7 +59,7 @@ export function buildProductDoc({ profile, category, item }) {
     storage: profile.storage || '',
     subtitle: profile.subtitle || '',
     media: profile.media && typeof profile.media === 'object' ? profile.media : {},
-    combo: null,
+    combo: normalizeCombo(combo, unitPriceCent),
     categoryMeta: category.meta && typeof category.meta === 'object' ? category.meta : {},
   }
 }
@@ -105,9 +113,10 @@ export function createOnlineCatalogPublisher({ app, envId = '', logger = console
   }
 
   async function publishProduct({ profile, category, item }) {
-    const doc = buildProductDoc({ profile, category, item })
+    const existing = await readProduct(profile.mpId)
+    // 档案没存组合定义时，沿用 CloudBase 现有值，避免把 combo 覆盖成 null
+    const doc = buildProductDoc({ profile, category, item, combo: profile.combo ?? existing?.combo ?? null })
     doc.media = await materializeMedia(doc.media, doc.id)
-    const existing = await readProduct(doc.id)
     if (existing) {
       // @cloudbase/node-sdk document.update/add/set take the payload directly
       // (unlike the wx client SDK's { data: ... } wrapper).

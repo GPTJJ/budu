@@ -2493,6 +2493,7 @@ model OnlineProductProfile {
   shelfLife        String          @default("") @map("shelf_life")
   storage          String          @default("")
   media            Json            @default("{}")
+  combo            Json?           @map("combo")
   sortOrder        Int             @default(0) @map("sort_order")
   status           String          @default("DRAFT")
   publishState     String          @default("UNPUBLISHED") @map("publish_state")

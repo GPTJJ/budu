@@ -184,6 +184,7 @@ export function serializeProfile(profile) {
     shelfLife: profile.shelfLife,
     storage: profile.storage,
     media: profile.media || {},
+    combo: profile.combo || null,
     sortOrder: profile.sortOrder,
     status: profile.status,
     publishState: profile.publishState,
@@ -499,10 +500,6 @@ onlineCatalogRouter.post('/online-catalog/import-existing', wrap(async (req, res
   for (const doc of docs) {
     try {
       if (!doc?.id) continue
-      if (doc.combo) {
-        report.combo.push({ mpId: doc.id, name: doc.name || '' })
-        continue
-      }
       const existing = await prisma.onlineProductProfile.findUnique({ where: { mpId: doc.id } })
       if (existing) {
         report.skipped.push({ mpId: doc.id, reason: 'ALREADY_MANAGED' })
@@ -547,6 +544,7 @@ onlineCatalogRouter.post('/online-catalog/import-existing', wrap(async (req, res
             shelfLife: String(doc.shelfLife || '').slice(0, 40),
             storage: String(doc.storage || '').slice(0, 40),
             media: doc.media && typeof doc.media === 'object' ? doc.media : {},
+            combo: doc.combo && typeof doc.combo === 'object' ? doc.combo : null,
             sortOrder: Number.isInteger(doc.sortOrder) ? doc.sortOrder : 0,
             status: doc.status === 'on' ? 'ON' : 'OFF',
             publishState: 'PUBLISHED',
@@ -554,22 +552,27 @@ onlineCatalogRouter.post('/online-catalog/import-existing', wrap(async (req, res
             publishedAt: new Date(),
           },
         })
-        const externalSkuId = onlineSkuId(doc.id)
-        await tx.onlineProductPolicy.upsert({
-          where: { namespace_externalProductId_externalSkuId: { namespace: ONLINE_CATALOG_NAMESPACE, externalProductId: doc.id, externalSkuId } },
-          update: { productId: item.id, enabled: doc.status === 'on', updatedById: req.user.id },
-          create: {
-            id: `opp-${crypto.randomUUID()}`,
-            namespace: ONLINE_CATALOG_NAMESPACE,
-            externalProductId: doc.id,
-            externalSkuId,
-            productId: item.id,
-            enabled: doc.status === 'on',
-            updatedById: req.user.id,
-          },
-        })
+        // 组合商品的 SKU 是按口味组合逐条映射的（onlineSkuId(mpId, flavors)），
+        // 这里不能建「无口味」那条，否则会污染结算映射。
+        if (!doc.combo) {
+          const externalSkuId = onlineSkuId(doc.id)
+          await tx.onlineProductPolicy.upsert({
+            where: { namespace_externalProductId_externalSkuId: { namespace: ONLINE_CATALOG_NAMESPACE, externalProductId: doc.id, externalSkuId } },
+            update: { productId: item.id, enabled: doc.status === 'on', updatedById: req.user.id },
+            create: {
+              id: `opp-${crypto.randomUUID()}`,
+              namespace: ONLINE_CATALOG_NAMESPACE,
+              externalProductId: doc.id,
+              externalSkuId,
+              productId: item.id,
+              enabled: doc.status === 'on',
+              updatedById: req.user.id,
+            },
+          })
+        }
       })
       report.created.push({ mpId: doc.id, name: doc.name || '', inventoryItemId: item.id, category: category.name })
+      if (doc.combo) report.combo.push({ mpId: doc.id, name: doc.name || '', slots: doc.combo.slots ?? null })
     } catch (error) {
       report.failed.push({ mpId: doc?.id || '', error: error.message || '导入失败' })
     }

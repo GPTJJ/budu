@@ -168,6 +168,7 @@ export default function OnlineCatalogPage() {
       status: product.status,
       media: product.media || { cover: '', gallery: [], detail: [] },
       displayMedia: product.mediaDisplay || { cover: '', gallery: [], detail: [] },
+      combo: product.combo || null,
     })
   }
 
@@ -466,6 +467,9 @@ export default function OnlineCatalogPage() {
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-semibold text-slate-800">{product.title || product.item?.name}</span>
                     <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500">{product.mpId}</span>
+                    {product.combo ? (
+                      <span className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">组合 ×{product.combo.slots ?? '?'}</span>
+                    ) : null}
                   </div>
                   <div className="mt-0.5 truncate text-xs text-slate-400">{product.subtitle || product.item?.name} · {product.spec || product.item?.spec || '—'}</div>
                   {product.publishState === 'FAILED' && product.lastError ? <div className="mt-0.5 truncate text-[11px] text-rose-500">{product.lastError}</div> : null}
@@ -560,6 +564,14 @@ export default function OnlineCatalogPage() {
                 <input type="file" accept="image/*" className="block w-full text-xs text-slate-500" onChange={(event) => onCover(event.target.files?.[0])} />
               </Field>
             </div>
+
+            {form.combo ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
+                组合商品：{form.combo.slots ?? '?'} 款自由搭配{form.combo.repeat ? '（可重复选同款）' : ''}，
+                口味范围 {(form.combo.flavorIds || []).join(' / ') || '—'} 由 POS 侧维护，本页不改动。
+                发布时原样保留组合结构，只更新价格、文案和图片。
+              </div>
+            ) : null}
 
             {form.media?.cover ? (
               <div className="flex items-center gap-3 rounded-xl border border-slate-200 p-2">

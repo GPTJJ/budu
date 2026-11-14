@@ -84,6 +84,21 @@ test('buildProductDoc projects the MiniProgram whitelist fields', () => {
   assert.equal(doc.sortOrder, 7)
 })
 
+test('buildProductDoc keeps the combo definition and syncs its box price', () => {
+  const combo = { slots: 4, repeat: true, flavorIds: ['b1', 'b2', 'b3', 'b4', 'b5', 'b6'], unitPriceCent: 19900 }
+  const doc = buildProductDoc({ profile: profile({ mpId: 'bb', title: 'Balls-礼盒', priceCents: 29900n }), category, item, combo })
+  assert.equal(doc.combo.slots, 4)
+  assert.equal(doc.combo.repeat, true)
+  assert.deepEqual(doc.combo.flavorIds, ['b1', 'b2', 'b3', 'b4', 'b5', 'b6'])
+  assert.equal(doc.combo.unitPriceCent, 29900, '组合单盒价必须跟随线上价')
+  assert.equal(doc.unitPriceCent, 29900)
+})
+
+test('buildProductDoc never emits a combo for normal products', () => {
+  assert.equal(buildProductDoc({ profile: profile(), category, item }).combo, null)
+  assert.equal(buildProductDoc({ profile: profile(), category, item, combo: 'garbage' }).combo, null)
+})
+
 test('buildProductDoc refuses an ON product without a positive price', () => {
   assert.throws(() => buildProductDoc({ profile: profile({ priceCents: 0n }), category, item }), /售价/)
 })
