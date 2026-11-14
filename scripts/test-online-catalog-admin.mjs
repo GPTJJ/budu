@@ -5,6 +5,7 @@ import { assertComboFlavors, assertComboOnShelf, comboSkus, findImportItem, norm
 import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
 import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
 import { bannerData, bannerChecksum, serializeBanner } from '../server/online-catalog.js'
+import { orderStateOf, orderStateWhere, normalizeOrderKeyword, autoCompleteCutoff } from '../server/online-catalog.js'
 
 const category = { name: '生巧克力', meta: { color: '#A13966', sub: '手工生巧' } }
 const item = { name: '新商品', unit: '盒', spec: '100g/盒', salePriceCents: 13800n }
@@ -470,4 +471,61 @@ test('serializeBanner exposes camelCase fields with safe defaults', () => {
   assert.equal(out.linkValue, '')
   assert.equal(out.mobileImage, '')
   assert.equal(out.enabled, true)
+})
+
+const DAY = 24 * 60 * 60 * 1000
+const ago = (days) => new Date(Date.now() - days * DAY)
+
+test('orderStateOf: pickup orders are completed immediately', () => {
+  assert.equal(orderStateOf('PAID', { method: 'PICKUP', createdAt: new Date() }), 'COMPLETED')
+})
+
+test('orderStateOf: delivery auto-completes after 7 days, not before', () => {
+  assert.equal(orderStateOf('PAID', { method: 'DELIVERY', createdAt: ago(7.01) }), 'COMPLETED')
+  assert.equal(orderStateOf('PAID', { method: 'DELIVERY', createdAt: ago(8) }), 'COMPLETED')
+  assert.equal(orderStateOf('PAID', { method: 'DELIVERY', createdAt: ago(3) }), 'SHIPPED')
+  assert.equal(orderStateOf('PAID', { method: 'DELIVERY', createdAt: ago(6.99) }), 'SHIPPED')
+})
+
+test('orderStateOf: paid without fulfillment stays TO_SHIP; other statuses untouched', () => {
+  assert.equal(orderStateOf('PAID', null), 'TO_SHIP')
+  assert.equal(orderStateOf('PAID', undefined), 'TO_SHIP')
+  assert.equal(orderStateOf('PENDING', null), 'PENDING')
+  assert.equal(orderStateOf('PENDING', { method: 'PICKUP', createdAt: new Date() }), 'PENDING')
+})
+
+test('orderStateOf: refunds and cancellations take priority over completion', () => {
+  assert.equal(orderStateOf('REFUNDED', { method: 'PICKUP', createdAt: ago(9) }), 'REFUNDED')
+  assert.equal(orderStateOf('CANCELLED', { method: 'DELIVERY', createdAt: ago(9) }), 'CANCELLED')
+})
+
+test('orderStateWhere mirrors orderStateOf for every derived state', () => {
+  const cutoff = new Date('2026-11-15T00:00:00Z')
+  assert.deepEqual(orderStateWhere('REFUNDED', cutoff), { status: 'REFUNDED' })
+  assert.deepEqual(orderStateWhere('CANCELLED', cutoff), { status: 'CANCELLED' })
+  assert.deepEqual(orderStateWhere('PENDING', cutoff), { status: { notIn: ['PAID', 'REFUNDED', 'CANCELLED'] } })
+  assert.deepEqual(orderStateWhere('TO_SHIP', cutoff), { status: 'PAID', fulfillmentAuthorization: { is: null } })
+  assert.deepEqual(orderStateWhere('SHIPPED', cutoff), {
+    status: 'PAID',
+    fulfillmentAuthorization: { method: 'DELIVERY', createdAt: { gt: cutoff } },
+  })
+  assert.deepEqual(orderStateWhere('COMPLETED', cutoff), {
+    status: 'PAID',
+    fulfillmentAuthorization: { OR: [{ method: 'PICKUP' }, { method: 'DELIVERY', createdAt: { lte: cutoff } }] },
+  })
+  assert.equal(orderStateWhere('BOGUS', cutoff), null)
+})
+
+test('orderStateWhere cutoff defaults to 7 days ago', () => {
+  const cutoff = orderStateWhere('SHIPPED').fulfillmentAuthorization.createdAt.gt
+  const expected = autoCompleteCutoff().getTime()
+  assert.ok(Math.abs(cutoff.getTime() - expected) < 5000, 'cutoff should be ~7 days ago')
+})
+
+test('normalizeOrderKeyword strips the derived customer label prefix', () => {
+  assert.equal(normalizeOrderKeyword('顾客 4a0a'), '4a0a')
+  assert.equal(normalizeOrderKeyword('顾客4a0a'), '4a0a')
+  assert.equal(normalizeOrderKeyword(' 4a0a '), '4a0a')
+  assert.equal(normalizeOrderKeyword('os-92e5567181d6'), 'os-92e5567181d6')
+  assert.equal(normalizeOrderKeyword(''), '')
 })

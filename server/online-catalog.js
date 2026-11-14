@@ -455,10 +455,53 @@ onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
 
 // ---------------- 订单（P1，只读 + 发货） ----------------
 
-const ORDER_LIST_LIMIT = 300
 const ORDER_PAGE_SIZE = 20
-const ORDER_STATE_LABEL = { TO_SHIP: '待发货', SHIPPED: '已发货', REFUNDED: '已退款', CANCELLED: '已取消', PENDING: '待支付' }
+/** 邮寄订单发货满 N 天自动视为已完成（派生状态，不写库） */
+const ORDER_AUTO_COMPLETE_DAYS = 7
+const ORDER_STATE_LABEL = { TO_SHIP: '待发货', SHIPPED: '已发货', COMPLETED: '已完成', REFUNDED: '已退款', CANCELLED: '已取消', PENDING: '待支付' }
 const TENDER_LABEL = { WECHAT: '微信支付', SWEET_CARD: '甜意卡', SWEETCARD: '甜意卡' }
+
+export function autoCompleteCutoff(now = Date.now()) {
+  return new Date(now - ORDER_AUTO_COMPLETE_DAYS * 24 * 60 * 60 * 1000)
+}
+
+/**
+ * 订单状态派生（与 orderStateWhere 必须保持同一套规则）：
+ * - REFUNDED / CANCELLED 优先；
+ * - PAID + 自提授权（PICKUP）→ COMPLETED（取货即完成）；
+ * - PAID + 邮寄授权（DELIVERY）→ 发货满 7 天 COMPLETED，未满 SHIPPED；
+ * - PAID 无授权 → TO_SHIP；其余 → PENDING。
+ */
+export function orderStateOf(status, fulfillment) {
+  if (status === 'REFUNDED') return 'REFUNDED'
+  if (status === 'CANCELLED') return 'CANCELLED'
+  if (status === 'PAID') {
+    if (!fulfillment) return 'TO_SHIP'
+    if (fulfillment.method === 'PICKUP') return 'COMPLETED'
+    const shippedAt = fulfillment.createdAt ? new Date(fulfillment.createdAt).getTime() : null
+    if (shippedAt && Date.now() - shippedAt >= ORDER_AUTO_COMPLETE_DAYS * 24 * 60 * 60 * 1000) return 'COMPLETED'
+    return 'SHIPPED'
+  }
+  return 'PENDING'
+}
+
+/** 与 orderStateOf 同口径的数据库筛选条件（避免取回后在内存里过滤、漏掉窗口外订单） */
+export function orderStateWhere(state, cutoff = autoCompleteCutoff()) {
+  if (state === 'REFUNDED') return { status: 'REFUNDED' }
+  if (state === 'CANCELLED') return { status: 'CANCELLED' }
+  if (state === 'PENDING') return { status: { notIn: ['PAID', 'REFUNDED', 'CANCELLED'] } }
+  if (state === 'TO_SHIP') return { status: 'PAID', fulfillmentAuthorization: { is: null } }
+  if (state === 'SHIPPED') return { status: 'PAID', fulfillmentAuthorization: { method: 'DELIVERY', createdAt: { gt: cutoff } } }
+  if (state === 'COMPLETED') {
+    return { status: 'PAID', fulfillmentAuthorization: { OR: [{ method: 'PICKUP' }, { method: 'DELIVERY', createdAt: { lte: cutoff } }] } }
+  }
+  return null
+}
+
+/** 搜索词归一化：列表展示的顾客是派生标签「顾客 XXXX」，用户照着搜要去掉前缀才能命中 username */
+export function normalizeOrderKeyword(raw) {
+  return String(raw || '').replace(/^顾客\s*/i, '').trim()
+}
 
 function orderLinesFromSnapshot(snapshot) {
   const lines = Array.isArray(snapshot?.lines) ? snapshot.lines : []
@@ -472,13 +515,6 @@ function orderLinesFromSnapshot(snapshot) {
   }))
 }
 
-function orderStateOf(status, shipped) {
-  if (status === 'REFUNDED') return 'REFUNDED'
-  if (status === 'CANCELLED') return 'CANCELLED'
-  if (status === 'PAID') return shipped ? 'SHIPPED' : 'TO_SHIP'
-  return 'PENDING'
-}
-
 function paymentMethodOf(tenders) {
   const types = [...new Set((tenders || []).filter((tender) => tender.status === 'SUCCEEDED' || tender.status === 'CAPTURED').map((tender) => tender.type))]
   if (!types.length) return '—'
@@ -487,7 +523,7 @@ function paymentMethodOf(tenders) {
 
 function serializeOrderRow(row, fulfillment) {
   const lines = orderLinesFromSnapshot(row.quote?.snapshot)
-  const state = orderStateOf(row.status, Boolean(fulfillment))
+  const state = orderStateOf(row.status, fulfillment)
   const refundCents = (row.refunds || []).reduce((sum, refund) => sum + Number(refund.totalCents || 0), 0)
   return {
     id: row.id,
@@ -520,44 +556,52 @@ const orderInclude = {
   quote: { select: { snapshot: true } },
   tenders: true,
   refunds: true,
+  fulfillmentAuthorization: true,
 }
 
 onlineCatalogRouter.get('/online-catalog/orders', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireCatalogManager(req.user)
-  const keyword = text(req.query.q, 50, '搜索词')
+  const keyword = normalizeOrderKeyword(text(req.query.q, 60, '搜索词'))
   const state = text(req.query.state, 20, '状态')
   const page = integer(req.query.page, '页码', { min: 1, max: 1000, fallback: 1 })
+  if (state && !ORDER_STATE_LABEL[state]) throw httpError(`未知订单状态：${state}`, 400)
 
-  const rows = await prisma.onlineSettlement.findMany({
-    where: keyword ? {
+  // 状态筛选下推到数据库（orderStateWhere 与 orderStateOf 同口径），
+  // 分页用 count + skip/take——之前「取 300 条再内存过滤分页」会漏掉窗口外订单。
+  const conditions = []
+  if (keyword) {
+    conditions.push({
       OR: [
         { externalOrderId: { contains: keyword } },
         { id: { contains: keyword } },
         { user: { is: { displayName: { contains: keyword } } } },
         { user: { is: { username: { contains: keyword } } } },
       ],
-    } : undefined,
-    include: orderInclude,
-    orderBy: { createdAt: 'desc' },
-    take: ORDER_LIST_LIMIT,
-  })
-  const ids = rows.map((row) => row.id)
-  // 发货授权是独立表：一次批量取回，避免 N+1
-  const authorizations = ids.length
-    ? await prisma.onlineFulfillmentAuthorization.findMany({ where: { settlementId: { in: ids } } })
-    : []
-  const shippedById = new Map(authorizations.map((row) => [row.settlementId, row]))
-  let orders = rows.map((row) => serializeOrderRow(row, shippedById.get(row.id)))
-  if (state) orders = orders.filter((order) => order.state === state)
+    })
+  }
+  const stateWhere = state ? orderStateWhere(state) : null
+  if (stateWhere) conditions.push(stateWhere)
+  const where = conditions.length ? { AND: conditions } : undefined
 
-  const start = (page - 1) * ORDER_PAGE_SIZE
+  const [rows, total] = await Promise.all([
+    prisma.onlineSettlement.findMany({
+      where,
+      include: orderInclude,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * ORDER_PAGE_SIZE,
+      take: ORDER_PAGE_SIZE,
+    }),
+    prisma.onlineSettlement.count({ where }),
+  ])
+  const orders = rows.map((row) => serializeOrderRow(row, row.fulfillmentAuthorization))
+
   res.json({
     ok: true,
-    total: orders.length,
+    total,
     page,
     pageSize: ORDER_PAGE_SIZE,
-    orders: orders.slice(start, start + ORDER_PAGE_SIZE),
+    orders,
   })
 }))
 
@@ -580,6 +624,13 @@ onlineCatalogRouter.get('/online-catalog/orders/:id', wrap(async (req, res) => {
         ? '顾客已取货'
         : `已发货${fulfillment.carrierCode ? ` · ${fulfillment.carrierCode}` : ''}${fulfillment.trackingNo ? ` ${fulfillment.trackingNo}` : ''}`,
     })
+    if (fulfillment.method === 'PICKUP') {
+      // 自提即完成：取货时间就是完成时间
+      timeline.push({ at: fulfillment.createdAt, label: '已完成（自提取货）' })
+    } else if (summary.state === 'COMPLETED') {
+      const completedAt = new Date(new Date(fulfillment.createdAt).getTime() + ORDER_AUTO_COMPLETE_DAYS * 24 * 60 * 60 * 1000)
+      timeline.push({ at: completedAt, label: `已完成（发货满 ${ORDER_AUTO_COMPLETE_DAYS} 天自动确认）` })
+    }
   }
   for (const refund of row.refunds || []) {
     timeline.push({ at: refund.createdAt, label: `退款${refund.status === 'SETTLED' ? '已到账' : '处理中'}${refund.totalCents ? ` · ¥${(Number(refund.totalCents) / 100).toFixed(2)}` : ''}` })

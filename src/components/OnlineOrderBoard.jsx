@@ -7,12 +7,16 @@ import { formatCents } from '../utils/pos'
  * 订单工作台（BUDU-MP-CONSOLE-001 / P1）
  *
  * 列表 + 右侧详情抽屉 + 发货动作。
- * 状态由后端派生：TO_SHIP / SHIPPED / REFUNDED / CANCELLED / PENDING。
+ * 状态由后端派生：TO_SHIP / SHIPPED / COMPLETED / REFUNDED / CANCELLED / PENDING。
+ * 自提授权即已完成；邮寄发货满 7 天自动已完成（均为派生，不写库）。
  */
+
+const PAGE_SIZE = 20
 
 const STATE_STYLE = {
   TO_SHIP: 'bg-amber-50 text-amber-700 border-amber-200',
   SHIPPED: 'bg-budu-50 text-budu-700 border-budu-200',
+  COMPLETED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   REFUNDED: 'bg-rose-50 text-rose-700 border-rose-200',
   CANCELLED: 'bg-slate-100 text-slate-500 border-slate-200',
   PENDING: 'bg-slate-100 text-slate-500 border-slate-200',
@@ -22,6 +26,7 @@ const FILTERS = [
   { key: '', label: '全部' },
   { key: 'TO_SHIP', label: '待发货' },
   { key: 'SHIPPED', label: '已发货' },
+  { key: 'COMPLETED', label: '已完成' },
   { key: 'REFUNDED', label: '已退款' },
   { key: 'CANCELLED', label: '已取消' },
 ]
@@ -42,6 +47,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
   const [state, setState] = useState(initialState)
   const [keyword, setKeyword] = useState('')
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -53,7 +59,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
   const [notice, setNotice] = useState('')
   const [form, setForm] = useState({ method: 'DELIVERY', carrierCode: 'SF', trackingNo: '' })
 
-  useEffect(() => { setState(initialState) }, [initialState])
+  useEffect(() => { setState(initialState); setPage(1) }, [initialState])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -62,6 +68,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
       const params = new URLSearchParams()
       if (state) params.set('state', state)
       if (query) params.set('q', query)
+      if (page > 1) params.set('page', String(page))
       const res = await api(`/v2/online-catalog/orders?${params.toString()}`)
       setRows(res.orders || [])
       setTotal(res.total || 0)
@@ -70,7 +77,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
     } finally {
       setLoading(false)
     }
-  }, [state, query])
+  }, [state, query, page])
 
   useEffect(() => { load() }, [load])
 
@@ -126,7 +133,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
               <button
                 key={item.key || 'all'}
                 type="button"
-                onClick={() => setState(item.key)}
+                onClick={() => { setState(item.key); setPage(1) }}
                 className={`h-7 rounded-full border px-3 text-xs ${state === item.key ? 'border-budu-200 bg-budu-50 font-medium text-budu-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
               >
                 {item.label}
@@ -140,12 +147,12 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') setQuery(keyword.trim()) }}
-              placeholder="订单号 / 顾客名"
+              onKeyDown={(e) => { if (e.key === 'Enter') { setQuery(keyword.trim()); setPage(1) } }}
+              placeholder="订单号 / 顾客 ID"
               className="w-40 border-0 bg-transparent text-xs outline-none"
             />
           </label>
-          <button type="button" onClick={() => setQuery(keyword.trim())} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50">搜索</button>
+          <button type="button" onClick={() => { setQuery(keyword.trim()); setPage(1) }} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50">搜索</button>
           <button type="button" onClick={load} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50">刷新</button>
         </div>
       </div>
@@ -195,7 +202,26 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
         </div>
         <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5 text-[11px] text-slate-400">
           <span>共 {total} 笔</span>
-          <span>{title} · 最近 {rows.length} 笔</span>
+          {(() => {
+            const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+            return (
+              <span className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={page <= 1 || loading}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-slate-50"
+                >上一页</button>
+                <span>第 {Math.min(page, pages)} / {pages} 页</span>
+                <button
+                  type="button"
+                  disabled={page >= pages || loading}
+                  onClick={() => setPage((p) => p + 1)}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-slate-50"
+                >下一页</button>
+              </span>
+            )
+          })()}
         </div>
       </div>
 
