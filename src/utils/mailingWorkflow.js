@@ -3,8 +3,14 @@ export const MAILING_TIER = Object.freeze({ STANDARD: 'STANDARD', FRESH: 'FRESH'
 
 export function shippingAmountCents(tier) {
   if (tier === MAILING_TIER.STANDARD) return 1800
-  if (tier === MAILING_TIER.FRESH) return 3500
+  if (tier === MAILING_TIER.FRESH) return 2800
   return null
+}
+
+// Historical rows predate shippingAmountCents; their fee label keeps the amount actually charged.
+function legacyFeeCents(fee) {
+  const matched = String(fee || '').match(/(\d+(?:\.\d+)?)\s*[¥元]/)
+  return matched ? Math.round(Number(matched[1]) * 100) : null
 }
 
 export function requiresPaymentConfirmation({ method, postage }) {
@@ -33,7 +39,7 @@ export function shippingPresentation(record) {
     return { method, postage, detail: '不包邮 · 微信沟通', tierLabel: '' }
   }
   const isFresh = record?.shippingTier === MAILING_TIER.FRESH || String(record?.fee || '').includes('生鲜')
-  const amount = Number(record?.shippingAmountCents) || (isFresh ? 3500 : 1800)
+  const amount = Number(record?.shippingAmountCents) || legacyFeeCents(record?.fee) || (isFresh ? 2800 : 1800)
   return {
     method,
     postage,

@@ -157,7 +157,7 @@ export function validateMailingMetadata(input) {
 
   const shippingTier = String(input?.shippingTier || '').toUpperCase()
   if (!Object.values(MAILING_SHIPPING_TIER).includes(shippingTier)) throw httpError('请选择顺丰运费类型')
-  const shippingAmountCents = shippingTier === MAILING_SHIPPING_TIER.STANDARD ? 1800 : 3500
+  const shippingAmountCents = shippingTier === MAILING_SHIPPING_TIER.STANDARD ? 1800 : 2800
   const suppliedAmount = Number(input?.shippingAmountCents ?? shippingAmountCents)
   if (suppliedAmount !== shippingAmountCents) throw httpError('运费金额与配送类型不一致')
   if (input?.paymentConfirmed !== true) throw httpError('请先确认收到顾客运费')
@@ -173,7 +173,7 @@ export function validateMailingMetadata(input) {
     paymentConfirmed: true,
     paymentConfirmedAt: paymentConfirmedAt?.toISOString() || null,
     paymentConfirmedBy,
-    fee: shippingTier === MAILING_SHIPPING_TIER.STANDARD ? '标准件18¥' : '生鲜航运35¥',
+    fee: shippingTier === MAILING_SHIPPING_TIER.STANDARD ? '标准件18¥' : '生鲜航运28¥',
   }
 }
 

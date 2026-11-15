@@ -251,7 +251,7 @@ test('record deep link is consumed into the existing authenticated focus contrac
 
 for (const [tier, postage, amount, label] of [
   ['STANDARD', '包邮', null, '标准'], ['FRESH', '包邮', null, '生鲜'],
-  ['STANDARD', '不包邮', 1800, '标准'], ['FRESH', '不包邮', 3500, '生鲜'],
+  ['STANDARD', '不包邮', 1800, '标准'], ['FRESH', '不包邮', 2800, '生鲜'],
   [null, '包邮', null, '未记录'],
 ]) {
   test(`mailing notice separates ${label} and ${postage}`, async () => {
@@ -268,7 +268,7 @@ for (const [tier, postage, amount, label] of [
       assert.match(message, new RegExp(`类型：${label}`))
       assert.ok(message.includes(`运费：${postage}${amount ? ` · ¥${amount / 100}` : ''}`))
       assert.doesNotMatch(message, /顺丰标准|顺丰生鲜/)
-      if (postage === '包邮') assert.doesNotMatch(message, /¥18|¥35/)
+      if (postage === '包邮') assert.doesNotMatch(message, /¥18|¥28/)
     } finally { mock.restore(); _resetWechatTokenCaches() }
   })
 }
@@ -280,7 +280,7 @@ test('real create/token/submit/record/WeCom chain uses locked shipping facts wit
   for (const [method, postage, tier, amount, providerFailure = false] of [
     ['顺丰邮寄', '包邮', 'STANDARD', null], ['顺丰邮寄', '包邮', 'FRESH', null],
     ['顺丰邮寄', '包邮', null, null],
-    ['顺丰邮寄', '不包邮', 'STANDARD', 1800], ['顺丰邮寄', '不包邮', 'FRESH', 3500],
+    ['顺丰邮寄', '不包邮', 'STANDARD', 1800], ['顺丰邮寄', '不包邮', 'FRESH', 2800],
     ['顺丰邮寄', '包邮', 'FRESH', null, true],
     ['同城闪送', '包邮', null, null], ['同城闪送', '不包邮', null, null],
   ]) {

@@ -27,11 +27,11 @@ test('mailing QR-only configuration matrix and server gate', () => {
   assert.throws(() => validateMailingMetadata({ ...standard, paymentConfirmed: false }), /确认收到顾客运费/)
   assert.equal(validateMailingMetadata(standard).fee, '标准件18¥')
   assert.equal(validateMailingMetadata(standard).shippingAmountCents, 1800)
-  assert.throws(() => validateMailingMetadata({ ...standard, shippingAmountCents: 3500 }), /金额与配送类型不一致/)
+  assert.throws(() => validateMailingMetadata({ ...standard, shippingAmountCents: 2800 }), /金额与配送类型不一致/)
 
-  const fresh = { ...standard, shippingTier: MAILING_TIER.FRESH, shippingAmountCents: 3500 }
-  assert.equal(validateMailingMetadata(fresh).fee, '生鲜航运35¥')
-  assert.equal(validateMailingMetadata(fresh).shippingAmountCents, 3500)
+  const fresh = { ...standard, shippingTier: MAILING_TIER.FRESH, shippingAmountCents: 2800 }
+  assert.equal(validateMailingMetadata(fresh).fee, '生鲜航运28¥')
+  assert.equal(validateMailingMetadata(fresh).shippingAmountCents, 2800)
 
   const flash = { ...base, method: MAILING_METHOD.FLASH, postage: '不包邮' }
   const flashLocked = validateMailingMetadata(flash)
@@ -47,6 +47,9 @@ test('record presentation and copy are deterministic and legacy-compatible', () 
     { method: '同城闪送', postage: '不包邮', detail: '不包邮 · 微信沟通', tierLabel: '' },
   )
   assert.equal(shippingPresentation({ method: '顺丰邮寄', postage: '不包邮', fee: '生鲜航运30¥' }).tierLabel, '生鲜')
+  // Rows created before the 28 元 price still bill what the customer actually paid.
+  assert.equal(shippingPresentation({ method: '顺丰邮寄', postage: '不包邮', fee: '生鲜航运35¥' }).detail, '不包邮 · ¥35')
+  assert.equal(shippingPresentation({ method: '顺丰邮寄', postage: '不包邮', shippingTier: 'FRESH', shippingAmountCents: 2800 }).detail, '不包邮 · ¥28')
   const copy = buildMailingCopyText({
     recipient: '测试甲', phone: '13800000001', address: '测试地址1号', remark: '',
     method: '同城闪送', postage: '不包邮', shippingPaymentMode: 'WECHAT_COMMUNICATION',

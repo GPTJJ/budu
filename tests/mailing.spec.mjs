@@ -34,26 +34,26 @@ test('顺丰包邮选择标准后可生成顾客二维码，锁定条件进入�
   expect(body.paymentConfirmed).toBe(false)
 })
 
-test('顺丰不包邮在收款确认前前后端请求均被 UI 门禁，生鲜固定 ¥35', async ({ page }) => {
+test('顺丰不包邮在收款确认前前后端请求均被 UI 门禁，生鲜固定 ¥28', async ({ page }) => {
   await page.goto('/tests/mailing-harness.html')
   await choose(page, '运费承担', '不包邮')
-  await choose(page, '类型', '生鲜 ¥35')
+  await choose(page, '类型', '生鲜 ¥28')
   const generate = page.getByRole('button', { name: '生成顾客填写二维码' })
   await expect(generate).toBeDisabled()
   await expect(page.getByText('收到运费并确认后，才能生成顾客填写二维码。')).toBeVisible()
   expect(await page.evaluate(() => window.__mailingTest.customerBodies.length)).toBe(0)
 
   await page.getByRole('button', { name: '打开微信收款二维码' }).click()
-  const payment = page.getByRole('dialog', { name: '微信收款 ¥35' })
+  const payment = page.getByRole('dialog', { name: '微信收款 ¥28' })
   await expect(payment.getByTestId('mailing-payment-qr')).toBeVisible()
   await payment.getByRole('button', { name: '完成' }).click()
-  await page.getByRole('button', { name: '确认已收到 ¥35' }).click()
+  await page.getByRole('button', { name: '确认已收到 ¥28' }).click()
   await expect(generate).toBeEnabled()
   await generate.click()
   await expect(page.getByRole('dialog', { name: '顾客填写收件信息' })).toBeVisible()
   const body = await page.evaluate(() => window.__mailingTest.customerBodies.at(-1))
   expect(body.shippingTier).toBe('FRESH')
-  expect(body.shippingAmountCents).toBe(3500)
+  expect(body.shippingAmountCents).toBe(2800)
   expect(body.paymentConfirmed).toBe(true)
 })
 
@@ -63,9 +63,9 @@ test('配送条件变更会清除旧运费确认，不能沿用旧确认生成�
   await choose(page, '类型', '标准 ¥18')
   await page.getByRole('button', { name: '确认已收到 ¥18' }).click()
   await expect(page.getByRole('button', { name: '生成顾客填写二维码' })).toBeEnabled()
-  await choose(page, '类型', '生鲜 ¥35')
+  await choose(page, '类型', '生鲜 ¥28')
   await expect(page.getByRole('button', { name: '生成顾客填写二维码' })).toBeDisabled()
-  await expect(page.getByRole('button', { name: '确认已收到 ¥35' })).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByRole('button', { name: '确认已收到 ¥28' })).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('同城闪送不包邮只表达微信沟通，不出现金额与支付确认并仍可生成 QR', async ({ page }) => {

@@ -132,7 +132,7 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
       () => createCustomerServiceRequest({
         prismaClient: prisma,
         user: DEV,
-        input: { type: 'MAILING', storeKey: 'xidan', method: '顺丰邮寄', postage: '不包邮', shippingTier: 'FRESH', shippingAmountCents: 3500, paymentConfirmed: false },
+        input: { type: 'MAILING', storeKey: 'xidan', method: '顺丰邮寄', postage: '不包邮', shippingTier: 'FRESH', shippingAmountCents: 2800, paymentConfirmed: false },
       }),
       /确认收到顾客运费/,
     )
@@ -192,7 +192,7 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
     assert.equal(wecomDelivery.status, 'skipped', '企微缺配置不得阻塞正式 Mailing 与站内通知')
   })
 
-  await t.test('顺丰生鲜 ¥35 的锁定条件与工作人员确认审计写入正式记录', async () => {
+  await t.test('顺丰生鲜 ¥28 的锁定条件与工作人员确认审计写入正式记录', async () => {
     const confirmedAt = new Date('2026-08-28T07:00:00.000Z')
     const created = await createCustomerServiceRequest({
       prismaClient: prisma,
@@ -200,7 +200,7 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
       now: confirmedAt,
       input: {
         type: 'MAILING', storeKey: 'xidan', method: '顺丰邮寄', postage: '不包邮',
-        shippingTier: 'FRESH', shippingAmountCents: 3500, paymentConfirmed: true,
+        shippingTier: 'FRESH', shippingAmountCents: 2800, paymentConfirmed: true,
         paymentConfirmedAt: '1999-01-01T00:00:00.000Z', paymentConfirmedBy: 'spoofed',
       },
     })
@@ -219,7 +219,7 @@ test('Customer Self-Service Request：token、并发事务、业务记录与通�
     const official = await prisma.mailingRecord.findUnique({ where: { id: (await prisma.customerServiceRequest.findUnique({ where: { id: created.request.id } })).linkedBusinessRecordId } })
     assert.equal(official.storeKey, 'xidan')
     assert.equal(official.shippingTier, 'FRESH')
-    assert.equal(official.shippingAmountCents, 3500)
+    assert.equal(official.shippingAmountCents, 2800)
     assert.equal(official.shippingPaymentMode, 'COLLECTED')
     assert.equal(official.shippingPaymentConfirmedBy, DEV.username)
     assert.equal(official.shippingPaymentConfirmedAt.toISOString(), confirmedAt.toISOString())

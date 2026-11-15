@@ -297,7 +297,7 @@ export default function StoreMailingPage({ currentUser, onBack }) {
           <ChoiceGroup label="运费承担" options={['包邮', '不包邮']} value={postage} onChange={setPostage} />
 
           {method === MAILING_METHOD.SF && (
-            <ChoiceGroup label="类型" options={[{ value: MAILING_TIER.STANDARD, label: postage === '包邮' ? '标准' : '标准 ¥18' }, { value: MAILING_TIER.FRESH, label: postage === '包邮' ? '生鲜' : '生鲜 ¥35' }]} value={shippingTier} onChange={setShippingTier} />
+            <ChoiceGroup label="类型" options={[{ value: MAILING_TIER.STANDARD, label: postage === '包邮' ? '标准' : '标准 ¥18' }, { value: MAILING_TIER.FRESH, label: postage === '包邮' ? '生鲜' : '生鲜 ¥28' }]} value={shippingTier} onChange={setShippingTier} />
           )}
 
           {requiresPaymentConfirmation(config) && Object.values(MAILING_TIER).includes(shippingTier) && (
