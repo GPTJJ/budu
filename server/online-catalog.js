@@ -797,6 +797,7 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireCatalogManager(req.user)
   const days = integer(req.query.days, '统计天数', { min: 7, max: 90, fallback: 30 })
+  const productLimit = integer(req.query.productLimit, '商品榜数量', { min: 1, max: 50, fallback: 10 })
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
 
   const rows = await prisma.onlineSettlement.findMany({
@@ -845,7 +846,7 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
   }
 
   const series = [...buckets.values()].sort((a, b) => a.date.localeCompare(b.date))
-  const top = [...products.values()].sort((a, b) => b.amountCents - a.amountCents).slice(0, 10)
+  const top = [...products.values()].sort((a, b) => b.amountCents - a.amountCents).slice(0, productLimit)
 
   res.json({
     ok: true,
@@ -864,6 +865,7 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
     },
     series,
     top,
+    productCount: products.size,
   })
 }))
 

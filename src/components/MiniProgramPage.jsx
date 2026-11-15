@@ -18,6 +18,10 @@ import OnlineOrderBoard from './OnlineOrderBoard'
 import AfterSalesBoard from './AfterSalesBoard'
 import AnalyticsBoard from './AnalyticsBoard'
 import BannerBoard from './BannerBoard'
+import CategoryBoard from './CategoryBoard'
+import ComboBoard from './ComboBoard'
+import ProductPerformanceBoard from './ProductPerformanceBoard'
+import PublishRecordBoard from './PublishRecordBoard'
 
 /**
  * 小程序管理台外壳（BUDU-MP-CONSOLE-001 / P0）
@@ -41,8 +45,8 @@ const MODULES = [
     desc: '线上档案即发布源：保存后点「发布」，小程序约 60 秒内更新',
     views: [
       { key: 'products', label: '商品列表' },
-      { key: 'products-category', label: '分类管理', soon: true },
-      { key: 'products-combo', label: '组合商品', soon: true },
+      { key: 'products-category', label: '分类管理' },
+      { key: 'products-combo', label: '组合商品' },
       { key: 'products-mapping', label: '库存与映射', soon: true },
     ],
   },
@@ -125,10 +129,30 @@ const MODULES = [
 ]
 
 const SOON_COPY = {
-  orders: { title: '订单工作台', note: '订单数据与结算、支付、退款、物流记录都已经在库里，P1 接入列表与详情抽屉后即可使用。' },
-  'after-sales': { title: '售后工作台', note: '退款服务（原路退回）已经存在，P2 接入审核界面；当前可在订单详情中发起。' },
-  shipments: { title: '发货工作台', note: '批量发货与微信发货同步的服务已就绪，P1 接入操作界面。' },
-  'marketing-banner': { title: '首页轮播', note: '轮播条目目前写死在客户端源码里。后台化需要先解决图片写入权限，并做一次客户端改造读取远程配置。' },
+  'shipments:shipments-issue': {
+    title: '物流异常',
+    note: '需要接入快递轨迹查询接口后，才能按「超时未更新 / 派送异常」聚合订单。当前可在订单详情里查看物流公司与运单号。',
+  },
+  'marketing:marketing-campaign': {
+    title: '优惠活动',
+    note: '优惠券、满减与限时活动需要小程序客户端同步支持（下单与结算链路都要改造），后台单方面配置无法生效。规划中。',
+  },
+  'shop:shop-home': {
+    title: '首页装修',
+    note: '首页除轮播外的商品区、活动位由客户端固定结构渲染；做可视化装修需要先升级小程序的渲染协议并发布新版本。轮播已可在「营销 → 首页轮播」中管理。',
+  },
+  'shop:shop-category': {
+    title: '分类页',
+    note: '分类页由小程序端固定实现，目前没有可配置项；分类本身的名称与排序在「商品 → 分类管理」中维护。',
+  },
+  'shop:shop-profile': {
+    title: '个人中心',
+    note: '个人中心的入口与文案由客户端固定，暂无可配置项。',
+  },
+  'settings:settings-shop': {
+    title: '店铺信息',
+    note: '店铺名称、地址、营业时间等由 POS 设置统一维护，避免两处编辑不一致；这里规划为只读展示。',
+  },
 }
 
 function PageHead({ title, desc, actions }) {
@@ -267,7 +291,7 @@ function Overview({ onGo }) {
 }
 
 function ComingSoon({ moduleKey, view }) {
-  const copy = SOON_COPY[moduleKey] || { title: view.label, note: '该模块在后续阶段建设。' }
+  const copy = SOON_COPY[`${moduleKey}:${view.key}`] || { title: view.label, note: '该模块在后续阶段建设。' }
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-6 py-14 text-center">
       <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400">
@@ -295,6 +319,22 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
   const go = (nextModule, nextView) => {
     setModuleKey(nextModule)
     setViewKey(nextView || (MODULES.find((m) => m.key === nextModule)?.views[0] || {}).key)
+  }
+
+  const renderView = () => {
+    if (viewKey === 'overview') return <Overview onGo={go} />
+    if (viewKey === 'products') return <OnlineCatalogPage embedded />
+    if (viewKey === 'products-category') return <CategoryBoard />
+    if (viewKey === 'products-combo') return <ComboBoard onGo={go} />
+    if ((moduleKey === 'orders' || moduleKey === 'shipments') && view.state !== 'ISSUE') {
+      return <OnlineOrderBoard key={viewKey} initialState={view.state || ''} title={view.label} showFilters={moduleKey === 'orders'} />
+    }
+    if (moduleKey === 'after-sales') return <AfterSalesBoard key={viewKey} initialState={view.state || ''} />
+    if (viewKey === 'data-trade') return <AnalyticsBoard key={viewKey} />
+    if (viewKey === 'data-product') return <ProductPerformanceBoard />
+    if (viewKey === 'marketing-banner') return <BannerBoard key={viewKey} />
+    if (viewKey === 'settings-release') return <PublishRecordBoard onGo={go} />
+    return <ComingSoon moduleKey={moduleKey} view={view} />
   }
 
   return (
@@ -378,20 +418,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
             })}
           </div>
           <PageHead title={view.label === '商品列表' ? '商品' : view.label} desc={module.desc} />
-          {viewKey === 'overview' ? <Overview onGo={go} /> : null}
-          {viewKey === 'products' ? <OnlineCatalogPage embedded /> : null}
-          {(moduleKey === 'orders' || moduleKey === 'shipments') && view.state !== 'ISSUE' ? (
-            <OnlineOrderBoard key={viewKey} initialState={view.state || ''} title={view.label} showFilters={moduleKey === 'orders'} />
-          ) : null}
-          {moduleKey === 'after-sales' ? <AfterSalesBoard key={viewKey} initialState={view.state || ''} /> : null}
-          {moduleKey === 'data' && viewKey === 'data-trade' ? <AnalyticsBoard key={viewKey} /> : null}
-          {moduleKey === 'marketing' && viewKey === 'marketing-banner' ? <BannerBoard key={viewKey} /> : null}
-          {moduleKey === 'shipments' && view.state === 'ISSUE' ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
-          {moduleKey !== 'overview' && moduleKey !== 'orders' && moduleKey !== 'shipments' && moduleKey !== 'after-sales'
-            && !(moduleKey === 'data' && viewKey === 'data-trade')
-            && !(moduleKey === 'marketing' && viewKey === 'marketing-banner')
-            && viewKey !== 'products'
-            ? <ComingSoon moduleKey={moduleKey} view={view} /> : null}
+          {renderView()}
         </div>
       </main>
 
