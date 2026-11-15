@@ -66,5 +66,19 @@ export async function uploadCatalogImage(dataUrl, { client = null, now = new Dat
   }
   const fileId = response?.fileID || response?.fileId || ''
   if (!fileId) throw httpError('云存储未返回文件标识', 502)
-  return { fileId, cloudPath, size: buffer.length, ext }
+
+  // 服务端直传的对象客户端无法用 cloud:// 解析（空白图）。交给云函数
+  // （环境管理员身份）转存一份，用返回的 fileID 落库；失败则保留原值，
+  // 由 catalog 的临时链接层兜底。
+  let finalFileId = fileId
+  try {
+    const copied = await cloudbase.callFunction({ name: 'mediaUpload', data: { fileID: fileId, deleteSource: true } })
+    const payload = copied?.result || copied
+    if (payload && payload.ok === true && typeof payload.fileID === 'string' && payload.fileID) {
+      finalFileId = payload.fileID
+    }
+  } catch {
+    // 云函数不可用时保持原 fileID
+  }
+  return { fileId: finalFileId, cloudPath, size: buffer.length, ext }
 }
