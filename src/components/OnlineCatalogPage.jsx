@@ -261,6 +261,29 @@ export default function OnlineCatalogPage({ embedded = false }) {
     }
   }
 
+  // 调整轮播/详情图顺序：media 与 displayMedia 同步换位，保存时按数组顺序写入
+  const moveMedia = (key, index, delta) => {
+    setForm((current) => {
+      const list = (current.media || {})[key] || []
+      const target = index + delta
+      if (target < 0 || target >= list.length) return current
+      const swap = (arr) => {
+        const next = [...arr]
+        const temp = next[index]
+        next[index] = next[target]
+        next[target] = temp
+        return next
+      }
+      // displayMedia 可能与 media 不等长（历史档案缺临时链接），先对齐长度再换位
+      const display = Array.from({ length: list.length }, (_, i) => ((current.displayMedia || {})[key] || [])[i] || '')
+      return {
+        ...current,
+        media: { ...(current.media || {}), [key]: swap(list) },
+        displayMedia: { ...(current.displayMedia || {}), [key]: swap(display) },
+      }
+    })
+  }
+
   const removeMedia = (key, index) => {
     setForm((current) => ({
       ...current,
@@ -673,18 +696,41 @@ export default function OnlineCatalogPage({ embedded = false }) {
             {['gallery', 'detail'].map((key) => (
               (form.media?.[key] || []).length ? (
                 <div key={key} className="rounded-xl border border-slate-200 p-2">
-                  <div className="mb-1 text-[11px] text-slate-400">{key === 'gallery' ? '轮播图' : '详情图'}（{form.media[key].length}）</div>
+                  <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                    <span>{key === 'gallery' ? '轮播图' : '详情图'}（{form.media[key].length}）</span>
+                    <span className="text-slate-400">{key === 'gallery' ? '第一张为小程序列表主图，用 ‹ › 调整顺序' : '用 ‹ › 调整展示顺序'}</span>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {form.media[key].map((_, index) => (
-                      <div key={`${key}-${index}`} className="relative h-16 w-16 overflow-hidden rounded-lg bg-slate-100">
+                      <div key={`${key}-${index}`} className="relative h-20 w-20 overflow-hidden rounded-lg bg-slate-100">
                         <MediaThumb
                           src={formDisplay(key, index)}
-                          className="h-16 w-16"
+                          className="h-20 w-20"
                           rounded="rounded-lg"
                           emptyLabel="已上传"
                           textClass="text-[10px]"
                         />
-                        <button type="button" className="absolute right-0 top-0 rounded-bl bg-slate-900/60 px-1 text-[10px] text-white" onClick={() => removeMedia(key, index)}>×</button>
+                        <span className="absolute left-0 top-0 rounded-br bg-slate-900/60 px-1 text-[9px] leading-4 text-white">
+                          {key === 'gallery' && index === 0 ? '主图' : index + 1}
+                        </span>
+                        <button type="button" aria-label="移除这张图片" className="absolute right-0 top-0 rounded-bl bg-slate-900/60 px-1.5 text-[11px] leading-4 text-white" onClick={() => removeMedia(key, index)}>×</button>
+                        <div className="absolute inset-x-0 bottom-0 flex items-stretch justify-between bg-slate-900/55 text-white">
+                          <button
+                            type="button"
+                            aria-label="向前移动"
+                            disabled={index === 0}
+                            onClick={() => moveMedia(key, index, -1)}
+                            className="h-6 flex-1 text-[11px] leading-6 disabled:opacity-30 active:bg-white/20"
+                          >‹</button>
+                          <span className="w-px bg-white/30" />
+                          <button
+                            type="button"
+                            aria-label="向后移动"
+                            disabled={index === form.media[key].length - 1}
+                            onClick={() => moveMedia(key, index, 1)}
+                            className="h-6 flex-1 text-[11px] leading-6 disabled:opacity-30 active:bg-white/20"
+                          >›</button>
+                        </div>
                       </div>
                     ))}
                   </div>
