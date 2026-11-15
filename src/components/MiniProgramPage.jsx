@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   LayoutDashboard,
   Package,
@@ -12,7 +12,6 @@ import {
   ChevronLeft,
 } from 'lucide-react'
 import { api } from '../utils/api'
-import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../../shared/accountPermissions'
 import { formatCents } from '../utils/pos'
 import OnlineCatalogPage from './OnlineCatalogPage'
 import OnlineOrderBoard from './OnlineOrderBoard'
@@ -23,6 +22,7 @@ import CategoryBoard from './CategoryBoard'
 import ComboBoard from './ComboBoard'
 import ProductPerformanceBoard from './ProductPerformanceBoard'
 import PublishRecordBoard from './PublishRecordBoard'
+import AccessBoard from './AccessBoard'
 
 /**
  * 小程序管理台外壳（BUDU-MP-CONSOLE-001 / P0）
@@ -265,37 +265,72 @@ function ComingSoon({ view }) {
 
 export default function MiniProgramPage({ initialModule = 'overview' }) {
   // 入口守卫：直达链接不经过登录/权限判断，这里补一次校验（接口侧仍会 403）
-  const [access, setAccess] = useState({ state: 'checking' })
+  const [access, setAccess] = useState({ state: 'checking', modules: {}, canManageAccess: false })
   useEffect(() => {
     let cancelled = false
-    api('/auth/me')
-      .then(({ user }) => {
+    const loadAccess = () => api('/v2/online-catalog/access')
+      .then((res) => {
         if (cancelled) return
-        const allowed = Boolean(isSuperUser(user)
-          || (user?.role === 'manager' && user?.status !== 'disabled' && hasModuleAccess(user, MODULE_KEYS.PRODUCT_CENTER)))
-        setAccess({ state: allowed ? 'ok' : 'denied' })
+        const modules = res.modules || {}
+        const any = Object.values(modules).some(Boolean)
+        setAccess({ state: any ? 'ok' : 'denied', modules, canManageAccess: Boolean(res.canManageAccess) })
       })
       .catch((error) => {
         if (cancelled) return
-        setAccess({ state: error?.status === 401 ? 'login' : 'denied' })
+        setAccess((prev) => ({ ...prev, state: error?.status === 401 ? 'login' : 'denied' }))
       })
-    return () => { cancelled = true }
+    loadAccess()
+    // 授权变更后最多 60 秒同步；切回前台时立刻刷新
+    const timer = window.setInterval(loadAccess, 60000)
+    const onVisible = () => { if (document.visibilityState === 'visible') loadAccess() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
+
+  // 只有被授权的模块才会出现在导航里；路由（视图）同样按模块过滤
+  const visibleModules = useMemo(
+    () => MODULES.filter((m) => access.modules[m.key] === true),
+    [access.modules],
+  )
+  const viewsOf = useCallback((m) => (
+    m.key === 'settings' && access.canManageAccess
+      ? [...m.views, { key: 'settings-access', label: '权限分配' }]
+      : m.views
+  ), [access.canManageAccess])
 
   const [moduleKey, setModuleKey] = useState(
     MODULES.some((m) => m.key === initialModule) ? initialModule : 'overview',
   )
-  const module = useMemo(() => MODULES.find((m) => m.key === moduleKey) || MODULES[0], [moduleKey])
-  const [viewKey, setViewKey] = useState(module.views[0].key)
+  const module = useMemo(
+    () => visibleModules.find((m) => m.key === moduleKey) || visibleModules[0] || MODULES[0],
+    [visibleModules, moduleKey],
+  )
+  const moduleViews = viewsOf(module)
+  const [viewKey, setViewKey] = useState(moduleViews[0].key)
+
+  // 初始 moduleKey 可能指向未授权模块（如 staff 只有订单权限），自动落到第一个可见模块
+  useEffect(() => {
+    if (module && module.key !== moduleKey) setModuleKey(module.key)
+  }, [module, moduleKey])
+
+  // 初始 moduleKey 可能指向未授权模块（如 staff 只有订单权限），自动落到第一个可见模块
+  useEffect(() => {
+    if (module && module.key !== moduleKey) setModuleKey(module.key)
+  }, [module, moduleKey])
 
   useEffect(() => {
-    setViewKey((module.views[0] || {}).key)
-  }, [moduleKey])
+    setViewKey((viewsOf(module)[0] || {}).key)
+  }, [moduleKey, viewsOf, module])
 
-  const view = module.views.find((v) => v.key === viewKey) || module.views[0]
+  const view = moduleViews.find((v) => v.key === viewKey) || moduleViews[0]
   const go = (nextModule, nextView) => {
-    setModuleKey(nextModule)
-    setViewKey(nextView || (MODULES.find((m) => m.key === nextModule)?.views[0] || {}).key)
+    const target = visibleModules.find((m) => m.key === nextModule) || visibleModules[0] || MODULES[0]
+    setModuleKey(target.key)
+    setViewKey(nextView || (viewsOf(target)[0] || {}).key)
   }
 
   const renderView = () => {
@@ -303,14 +338,23 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
     if (viewKey === 'products') return <OnlineCatalogPage embedded />
     if (viewKey === 'products-category') return <CategoryBoard />
     if (viewKey === 'products-combo') return <ComboBoard onGo={go} />
-    if ((moduleKey === 'orders' || moduleKey === 'shipments') && view.state !== 'ISSUE') {
+    if ((module.key === 'orders' || module.key === 'shipments') && view.state !== 'ISSUE') {
       return <OnlineOrderBoard key={viewKey} initialState={view.state || ''} title={view.label} showFilters={moduleKey === 'orders'} />
     }
-    if (moduleKey === 'after-sales') return <AfterSalesBoard key={viewKey} initialState={view.state || ''} />
+    if (module.key === 'after-sales') return <AfterSalesBoard key={viewKey} initialState={view.state || ''} />
     if (viewKey === 'data-trade') return <AnalyticsBoard key={viewKey} />
     if (viewKey === 'data-product') return <ProductPerformanceBoard />
     if (viewKey === 'marketing-banner') return <BannerBoard key={viewKey} />
     if (viewKey === 'settings-release') return <PublishRecordBoard onGo={go} />
+    if (viewKey === 'settings-access' && access.canManageAccess) return <AccessBoard />
+    if (access.modules[module.key] !== true) {
+      return (
+        <div className="rounded-2xl border border-slate-200 bg-white px-6 py-14 text-center">
+          <div className="text-sm font-semibold text-slate-700">未授权</div>
+          <p className="mt-2 text-xs text-slate-500">当前账号没有「{module.label}」模块的权限，请联系开发者分配。</p>
+        </div>
+      )
+    }
     return <ComingSoon view={view} />
   }
 
@@ -351,7 +395,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
 
       {/* 图标栏（桌面） */}
       <nav className="hidden flex-col items-center gap-1 overflow-y-auto border-r border-slate-200 bg-[#FFFDFB] py-3 lg:flex">
-        {MODULES.map((item) => {
+        {visibleModules.map((item) => {
           const Icon = item.icon
           const active = item.key === moduleKey
           return (
@@ -378,7 +422,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
       {/* 二级导航（桌面） */}
       <aside className="hidden flex-col overflow-y-auto border-r border-slate-200 bg-[#FFFDFB] px-3 py-4 lg:flex">
         <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{module.label}</div>
-        {module.views.map((item) => {
+        {moduleViews.map((item) => {
           const active = item.key === viewKey
           return (
             <button
@@ -401,7 +445,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
         <div className="mx-auto max-w-[1200px]">
           {/* 移动端视图切换 */}
           <div className="-mx-4 mb-3 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden">
-            {module.views.map((item) => {
+            {moduleViews.map((item) => {
               const active = item.key === viewKey
               return (
                 <button
@@ -426,7 +470,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-slate-200 bg-[#FFFDFB]/95 backdrop-blur lg:hidden"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
-        {MODULES.map((item) => {
+        {visibleModules.map((item) => {
           const Icon = item.icon
           const active = item.key === moduleKey
           return (

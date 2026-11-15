@@ -6,6 +6,7 @@ import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror,
 import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
 import { bannerData, bannerChecksum, serializeBanner } from '../server/online-catalog.js'
 import { orderStateOf, orderStateWhere, normalizeOrderKeyword, autoCompleteCutoff } from '../server/online-catalog.js'
+import { normalizeMpConsole, mpConsoleModulesOf, hasMpConsoleAccess, canEnterMpConsole, canManageMpConsoleAccess, MP_CONSOLE_MODULE_KEYS, MP_CONSOLE_PRESETS } from '../shared/accountPermissions.js'
 
 const category = { name: '生巧克力', meta: { color: '#A13966', sub: '手工生巧' } }
 const item = { name: '新商品', unit: '盒', spec: '100g/盒', salePriceCents: 13800n }
@@ -528,4 +529,69 @@ test('normalizeOrderKeyword strips the derived customer label prefix', () => {
   assert.equal(normalizeOrderKeyword(' 4a0a '), '4a0a')
   assert.equal(normalizeOrderKeyword('os-92e5567181d6'), 'os-92e5567181d6')
   assert.equal(normalizeOrderKeyword(''), '')
+})
+
+// ---------- 小程序管理台：模块级授权 ----------
+
+const consoleUser = (role, permissions = {}, extra = {}) => ({ id: 'u', username: 'u', role, status: 'active', permissions, assetCenter: false, ...extra })
+const allOn = (permissions) => Object.fromEntries(MP_CONSOLE_MODULE_KEYS.map((key) => [key, permissions === undefined ? true : permissions]))
+
+test('mpConsole defaults: superusers and product-centre managers get all modules', () => {
+  for (const role of ['developer', 'admin', 'finance']) {
+    const modules = normalizeMpConsole(undefined, role, {}).modules
+    assert.deepEqual(modules, allOn(true), `${role} should default to all modules`)
+  }
+  const managerModules = normalizeMpConsole(undefined, 'manager', { 'product-center': true }).modules
+  assert.deepEqual(managerModules, allOn(true))
+})
+
+test('mpConsole defaults: staff and managers without product centre get nothing', () => {
+  assert.deepEqual(normalizeMpConsole(undefined, 'staff', {}).modules, allOn(false))
+  assert.deepEqual(normalizeMpConsole(undefined, 'manager', {}).modules, allOn(false))
+})
+
+test('mpConsole explicit assignment wins over role defaults', () => {
+  const explicit = { modules: { overview: true, orders: true } }
+  const manager = normalizeMpConsole(explicit, 'manager', { 'product-center': true })
+  assert.equal(manager.explicit, true)
+  assert.equal(manager.modules.orders, true)
+  assert.equal(manager.modules.products, false)
+  assert.equal(manager.modules.settings, false)
+})
+
+test('mpConsole keeps settings for developers so they cannot lock themselves out', () => {
+  const developer = normalizeMpConsole({ modules: { orders: true, settings: false } }, 'developer', {})
+  assert.equal(developer.modules.orders, true)
+  assert.equal(developer.modules.settings, true, 'developer settings must stay on')
+})
+
+test('mpConsole access helpers follow the normalized modules', () => {
+  const staff = consoleUser('staff', { mpConsole: { modules: { orders: true, 'after-sales': true } } })
+  assert.equal(hasMpConsoleAccess(staff, 'orders'), true)
+  assert.equal(hasMpConsoleAccess(staff, 'after-sales'), true)
+  assert.equal(hasMpConsoleAccess(staff, 'products'), false)
+  assert.equal(canEnterMpConsole(staff), true)
+
+  const blocked = consoleUser('staff')
+  assert.equal(canEnterMpConsole(blocked), false)
+  assert.deepEqual(mpConsoleModulesOf(blocked), allOn(false))
+
+  const disabled = consoleUser('developer', {}, { status: 'disabled' })
+  assert.equal(canEnterMpConsole(disabled), false)
+})
+
+test('only active developers can manage console access', () => {
+  assert.equal(canManageMpConsoleAccess(consoleUser('developer')), true)
+  assert.equal(canManageMpConsoleAccess(consoleUser('admin')), false)
+  assert.equal(canManageMpConsoleAccess(consoleUser('manager', { modules: { 'product-center': true } })), false)
+  assert.equal(canManageMpConsoleAccess(consoleUser('developer', {}, { status: 'disabled' })), false)
+})
+
+test('console presets only use known modules and cover the expected roles', () => {
+  for (const preset of MP_CONSOLE_PRESETS) {
+    for (const key of preset.modules) assert.ok(MP_CONSOLE_MODULE_KEYS.includes(key), `${preset.key} has unknown module ${key}`)
+  }
+  const support = MP_CONSOLE_PRESETS.find((item) => item.key === 'support')
+  assert.deepEqual(support.modules, ['overview', 'orders', 'after-sales'])
+  assert.equal(MP_CONSOLE_PRESETS.find((item) => item.key === 'all').modules.length, MP_CONSOLE_MODULE_KEYS.length)
 })

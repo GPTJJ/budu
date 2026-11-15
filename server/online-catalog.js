@@ -13,7 +13,7 @@ import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { httpError, parseCents } from './pos-core.js'
-import { hasModuleAccess, isSuperUser, MODULE_KEYS } from '../shared/accountPermissions.js'
+import { hasModuleAccess, isSuperUser, MODULE_KEYS, MP_CONSOLE_MODULE_KEYS, canManageMpConsoleAccess, hasMpConsoleAccess, mpConsoleModulesOf, normalizeAccountPermissions } from '../shared/accountPermissions.js'
 import { getOnlineCatalogPublisher, buildProductDoc, checksum } from './online-catalog-publisher.js'
 import { enumerateOnlineSkus } from './online-catalog-coverage.js'
 import { createOnlineFulfillment } from './online-fulfillment.js'
@@ -41,6 +41,23 @@ const wrap = (handler) => async (req, res) => {
 function requireCatalogManager(user) {
   if (!user || (!isSuperUser(user) && !(user.role === 'manager' && hasModuleAccess(user, MODULE_KEYS.PRODUCT_CENTER)))) {
     throw httpError('无权限', 403)
+  }
+}
+
+/**
+ * 小程序管理台模块门控：传入多个模块键时命中任意一个即放行。
+ * 授权来自 User.permissions.mpConsole（开发者分配），角色默认见 normalizeMpConsole。
+ */
+function requireConsole(user, ...modules) {
+  if (!modules.some((key) => hasMpConsoleAccess(user, key))) {
+    throw httpError('该功能尚未授权给当前账号', 403)
+  }
+}
+
+function requireConsoleEntry(user) {
+  const modules = mpConsoleModulesOf(user)
+  if (!MP_CONSOLE_MODULE_KEYS.some((key) => modules[key] === true)) {
+    throw httpError('当前账号没有小程序管理台权限', 403)
   }
 }
 
@@ -388,7 +405,7 @@ export const onlineCatalogRouter = Router()
 
 onlineCatalogRouter.get('/online-catalog/status', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsoleEntry(req.user)
   const [categories, products] = await Promise.all([
     prisma.onlineCategory.count(),
     prisma.onlineProductProfile.count(),
@@ -405,7 +422,7 @@ onlineCatalogRouter.get('/online-catalog/status', wrap(async (req, res) => {
 
 // 图片先入云存储，档案里只存 cloud:// 文件 ID（不再把 base64 写进库）
 onlineCatalogRouter.post('/online-catalog/uploads', wrap(async (req, res) => {
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const { fileId, cloudPath, size } = await uploadCatalogImage(req.body && req.body.data)
   const lookup = await resolveTempUrls([fileId])
   res.status(201).json({ ok: true, fileId, cloudPath, size, url: lookup[fileId] || '' })
@@ -414,7 +431,7 @@ onlineCatalogRouter.post('/online-catalog/uploads', wrap(async (req, res) => {
 // 概览（只读）：商品结构 + 近 7 日与今日成交 + 待处理售后/发货
 onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'overview')
   const now = new Date()
   const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
   const todayStart = new Date(now)
@@ -561,7 +578,7 @@ const orderInclude = {
 
 onlineCatalogRouter.get('/online-catalog/orders', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'orders', 'shipments')
   const keyword = normalizeOrderKeyword(text(req.query.q, 60, '搜索词'))
   const state = text(req.query.state, 20, '状态')
   const page = integer(req.query.page, '页码', { min: 1, max: 1000, fallback: 1 })
@@ -607,7 +624,7 @@ onlineCatalogRouter.get('/online-catalog/orders', wrap(async (req, res) => {
 
 onlineCatalogRouter.get('/online-catalog/orders/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'orders', 'shipments')
   const row = await prisma.onlineSettlement.findUnique({ where: { id: String(req.params.id) }, include: orderInclude })
   if (!row) throw httpError('订单不存在', 404)
   const fulfillment = await prisma.onlineFulfillmentAuthorization.findUnique({ where: { settlementId: row.id } })
@@ -655,7 +672,7 @@ onlineCatalogRouter.get('/online-catalog/orders/:id', wrap(async (req, res) => {
 
 onlineCatalogRouter.post('/online-catalog/orders/:id/fulfill', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'orders', 'shipments')
   const body = req.body || {}
   const method = body.method === 'PICKUP' ? 'PICKUP' : 'DELIVERY'
   const carrierCode = method === 'DELIVERY' ? text(body.carrierCode, 40, '物流公司', true) : null
@@ -726,7 +743,7 @@ function serializeRefundRow(row) {
 
 onlineCatalogRouter.get('/online-catalog/refunds', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'after-sales')
   const status = text(req.query.status, 20, '状态')
   const rows = await prisma.onlineRefund.findMany({
     where: status ? { status } : undefined,
@@ -749,7 +766,7 @@ onlineCatalogRouter.get('/online-catalog/refunds', wrap(async (req, res) => {
 
 onlineCatalogRouter.get('/online-catalog/refunds/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'after-sales')
   const row = await prisma.onlineRefund.findUnique({
     where: { id: String(req.params.id) },
     include: {
@@ -795,7 +812,7 @@ onlineCatalogRouter.get('/online-catalog/refunds/:id', wrap(async (req, res) => 
 
 onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'data')
   const days = integer(req.query.days, '统计天数', { min: 7, max: 90, fallback: 30 })
   const productLimit = integer(req.query.productLimit, '商品榜数量', { min: 1, max: 50, fallback: 10 })
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
@@ -971,7 +988,7 @@ async function loadBanners() {
 
 onlineCatalogRouter.get('/online-catalog/banners', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'marketing')
   const { rows, publish } = await loadBanners()
   // 浏览器无法渲染 cloud:// 文件 ID，展示用临时链接单独返回，绝不回写数据库
   const lookup = await resolveTempUrls(rows.map((row) => row.image).filter(Boolean))
@@ -984,7 +1001,7 @@ onlineCatalogRouter.get('/online-catalog/banners', wrap(async (req, res) => {
 
 onlineCatalogRouter.post('/online-catalog/banners', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'marketing')
   const total = await prisma.onlineBanner.count()
   if (total >= BANNER_MAX) throw httpError(`轮播最多 ${BANNER_MAX} 条，请先删除不用的条目`)
   const data = bannerData(req.body)
@@ -1003,7 +1020,7 @@ onlineCatalogRouter.post('/online-catalog/banners', wrap(async (req, res) => {
 
 onlineCatalogRouter.put('/online-catalog/banners/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'marketing')
   const existing = await prisma.onlineBanner.findUnique({ where: { id: String(req.params.id) } })
   if (!existing) throw httpError('轮播条目不存在', 404)
   const data = bannerData(req.body, { existing })
@@ -1017,7 +1034,7 @@ onlineCatalogRouter.put('/online-catalog/banners/:id', wrap(async (req, res) => 
 
 onlineCatalogRouter.delete('/online-catalog/banners/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'marketing')
   const existing = await prisma.onlineBanner.findUnique({ where: { id: String(req.params.id) } })
   if (!existing) throw httpError('轮播条目不存在', 404)
   await prisma.onlineBanner.delete({ where: { id: existing.id } })
@@ -1027,7 +1044,7 @@ onlineCatalogRouter.delete('/online-catalog/banners/:id', wrap(async (req, res) 
 // 首次接手：把当前小程序包内的 7 条默认轮播导入成可编辑数据
 onlineCatalogRouter.post('/online-catalog/banners/import-defaults', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'marketing')
   const total = await prisma.onlineBanner.count()
   if (total > 0) throw httpError('已经有轮播数据，不能重复导入', 409)
   await prisma.onlineBanner.createMany({
@@ -1043,7 +1060,7 @@ onlineCatalogRouter.post('/online-catalog/banners/import-defaults', wrap(async (
 
 onlineCatalogRouter.post('/online-catalog/banners/publish', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'marketing')
   const { rows, publish } = await loadBanners()
   const enabled = rows.filter((row) => row.enabled)
   if (!enabled.length) throw httpError('至少要有 1 张启用的轮播图才能发布', 409)
@@ -1081,14 +1098,14 @@ onlineCatalogRouter.post('/online-catalog/banners/publish', wrap(async (req, res
 
 onlineCatalogRouter.get('/online-catalog/categories', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const categories = await prisma.onlineCategory.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] })
   res.json({ ok: true, categories })
 }))
 
 onlineCatalogRouter.post('/online-catalog/categories', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const body = req.body || {}
   const name = text(body.name, 20, '分类名称', true)
   const sortOrder = integer(body.sortOrder, '排序', { fallback: 0 })
@@ -1100,7 +1117,7 @@ onlineCatalogRouter.post('/online-catalog/categories', wrap(async (req, res) => 
 
 onlineCatalogRouter.put('/online-catalog/categories/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const body = req.body || {}
   const existing = await prisma.onlineCategory.findUnique({ where: { id: req.params.id } })
   if (!existing) throw httpError('分类不存在', 404)
@@ -1119,7 +1136,7 @@ onlineCatalogRouter.put('/online-catalog/categories/:id', wrap(async (req, res) 
 
 onlineCatalogRouter.get('/online-catalog/items', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const query = text(req.query.q, 50, '搜索词')
   const items = await prisma.inventoryItem.findMany({
     where: {
@@ -1137,7 +1154,7 @@ onlineCatalogRouter.get('/online-catalog/items', wrap(async (req, res) => {
 
 onlineCatalogRouter.get('/online-catalog/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const query = text(req.query.q, 50, '搜索词')
   const products = await prisma.onlineProductProfile.findMany({
     where: query ? { OR: [{ title: { contains: query } }, { mpId: { contains: query } }, { inventoryItem: { is: { name: { contains: query } } } }] } : undefined,
@@ -1150,7 +1167,7 @@ onlineCatalogRouter.get('/online-catalog/products', wrap(async (req, res) => {
 
 onlineCatalogRouter.post('/online-catalog/products', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const body = req.body || {}
   const mode = body.mode === 'existing' ? 'existing' : 'new'
   const categoryId = text(body.onlineCategoryId, 120, '线上分类', true)
@@ -1246,7 +1263,7 @@ onlineCatalogRouter.post('/online-catalog/products', wrap(async (req, res) => {
 
 onlineCatalogRouter.put('/online-catalog/products/:id', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const body = req.body || {}
   const existing = await loadProfile(req.params.id)
   if (body.mpId !== undefined && normalizeMpId(body.mpId, true) !== existing.mpId) throw httpError('小程序商品 ID 创建后不能修改', 409)
@@ -1288,7 +1305,7 @@ onlineCatalogRouter.put('/online-catalog/products/:id', wrap(async (req, res) =>
 
 onlineCatalogRouter.get('/online-catalog/products/:id/preview', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const profile = await loadProfile(req.params.id)
   if (!profile.category) throw httpError('请先选择线上分类', 409)
   const doc = buildProductDoc({ profile, category: profile.category, item: profile.inventoryItem })
@@ -1297,7 +1314,7 @@ onlineCatalogRouter.get('/online-catalog/products/:id/preview', wrap(async (req,
 
 onlineCatalogRouter.post('/online-catalog/products/:id/publish', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const profile = await loadProfile(req.params.id)
   try {
     const result = await publishOne(profile)
@@ -1313,7 +1330,7 @@ onlineCatalogRouter.post('/online-catalog/products/:id/publish', wrap(async (req
 
 onlineCatalogRouter.post('/online-catalog/import-existing', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const publisher = await getOnlineCatalogPublisher()
   const docs = await publisher.readAllProducts()
   const report = { created: [], skipped: [], unmatched: [], combo: [], inactive: [], failed: [] }
@@ -1402,7 +1419,7 @@ onlineCatalogRouter.post('/online-catalog/import-existing', wrap(async (req, res
 
 onlineCatalogRouter.post('/online-catalog/publish-batch', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
-  requireCatalogManager(req.user)
+  requireConsole(req.user, 'products')
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((id) => String(id)).filter(Boolean) : []
   if (!ids.length || ids.length > 100) throw httpError('请选择 1-100 个商品发布')
   // 批量发布时目录只读一次，避免每个商品都拉全量文档
@@ -1425,4 +1442,129 @@ onlineCatalogRouter.post('/online-catalog/publish-batch', wrap(async (req, res) 
     }
   }
   res.json({ ok: results.every((row) => row.ok), results })
+}))
+
+// ---------------- 小程序管理台：模块级授权（开发者分配） ----------------
+
+/** 当前账号在管理台可用的模块 + 是否具备分配权 */
+onlineCatalogRouter.get('/online-catalog/access', wrap(async (req, res) => {
+  const modules = mpConsoleModulesOf(req.user)
+  res.json({
+    ok: true,
+    modules,
+    canManageAccess: canManageMpConsoleAccess(req.user),
+    role: req.user?.role || '',
+  })
+}))
+
+/** 授权清单：仅开发者可见（含每个账号的模块开关与分配痕迹） */
+onlineCatalogRouter.get('/online-catalog/access/grants', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!canManageMpConsoleAccess(req.user)) throw httpError('仅开发者可分配管理台权限', 403)
+  const users = await prisma.user.findMany({
+    where: { role: { not: 'public' } },
+    select: { id: true, username: true, displayName: true, role: true, status: true, permissions: true, assetCenter: true },
+    orderBy: [{ role: 'asc' }, { username: 'asc' }],
+    take: 500,
+  })
+  res.json({
+    ok: true,
+    users: users.map((user) => {
+      const normalized = normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true)
+      return {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName || '',
+        role: user.role,
+        status: user.status,
+        modules: normalized.mpConsole.modules,
+        explicit: normalized.mpConsole.explicit,
+        updatedAt: normalized.mpConsole.updatedAt,
+        updatedBy: normalized.mpConsole.updatedBy,
+        self: user.id === req.user.id,
+      }
+    }),
+  })
+}))
+
+/** 分配/修改某账号的管理台模块（保存即生效：下一次请求按新权限校验） */
+onlineCatalogRouter.put('/online-catalog/access/grants/:userId', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  if (!canManageMpConsoleAccess(req.user)) throw httpError('仅开发者可分配管理台权限', 403)
+  const target = await prisma.user.findUnique({
+    where: { id: String(req.params.userId) },
+    select: { id: true, username: true, role: true, status: true, permissions: true, assetCenter: true },
+  })
+  if (!target) throw httpError('账号不存在', 404)
+  if (target.id === req.user.id) throw httpError('不能修改自己的权限，请让其他开发者操作', 400)
+  if (target.role === 'cashier') throw httpError('门店收银账号不进入小程序管理台', 400)
+  if (target.role === 'public') throw httpError('该账号不是内部账号', 400)
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {}
+  const incoming = body.modules && typeof body.modules === 'object' ? body.modules : {}
+  const modules = {}
+  for (const key of MP_CONSOLE_MODULE_KEYS) modules[key] = incoming[key] === true
+  if (target.role === 'developer') modules.settings = true
+
+  const base = target.permissions && typeof target.permissions === 'object' && !Array.isArray(target.permissions)
+    ? target.permissions
+    : {}
+  const now = new Date()
+  const updated = await prisma.user.update({
+    where: { id: target.id },
+    data: {
+      permissions: {
+        ...base,
+        mpConsole: { modules, updatedAt: now.toISOString(), updatedBy: req.user.username },
+      },
+      permissionsUpdatedAt: now,
+      permissionsUpdatedBy: req.user.username,
+    },
+    select: { id: true, username: true, role: true, permissions: true, assetCenter: true },
+  })
+  const normalized = normalizeAccountPermissions(updated.permissions, updated.role, updated.assetCenter === true)
+  res.json({
+    ok: true,
+    user: {
+      id: updated.id,
+      username: updated.username,
+      role: updated.role,
+      modules: normalized.mpConsole.modules,
+      explicit: normalized.mpConsole.explicit,
+      updatedAt: normalized.mpConsole.updatedAt,
+      updatedBy: normalized.mpConsole.updatedBy,
+    },
+  })
+}))
+
+/** 发布记录（设置模块专用，避免为了读状态而放开商品/轮播的接口权限） */
+onlineCatalogRouter.get('/online-catalog/publish-records', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireConsole(req.user, 'settings')
+  const [products, banner] = await Promise.all([
+    prisma.onlineProductProfile.findMany({
+      select: { mpId: true, title: true, status: true, publishState: true, publishedAt: true, lastError: true, sortOrder: true },
+      orderBy: [{ sortOrder: 'asc' }],
+      take: 300,
+    }),
+    prisma.onlineBannerPublish.findUnique({ where: { id: 'default' } }),
+  ])
+  res.json({
+    ok: true,
+    products: products.map((product) => ({
+      mpId: product.mpId,
+      title: product.title,
+      status: product.status,
+      publishState: product.publishState,
+      publishedAt: product.publishedAt,
+      lastError: product.lastError,
+    })),
+    banner: banner ? {
+      state: banner.state,
+      version: banner.version,
+      publishedAt: banner.publishedAt,
+      lastError: banner.lastError,
+      checksum: banner.checksum,
+    } : null,
+  })
 }))

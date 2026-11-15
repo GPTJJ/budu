@@ -76,6 +76,89 @@ export const MODULE_GROUPS = Object.freeze([
 
 export const ALL_MODULE_KEYS = Object.freeze(MODULE_GROUPS.flatMap((group) => group.modules.map((item) => item.key)))
 
+/**
+ * 小程序管理台（/mini-program）的模块级授权。
+ * 与 POS 侧 MODULE_KEYS 相互独立：进入管理台只看这里的 mpConsole.modules。
+ */
+export const MP_CONSOLE_MODULE_KEYS = Object.freeze([
+  'overview', 'products', 'orders', 'after-sales', 'shipments', 'marketing', 'data', 'settings',
+])
+
+export const MP_CONSOLE_MODULES = Object.freeze([
+  { key: 'overview', label: '概览', note: '今日概览与待办入口' },
+  { key: 'products', label: '商品', note: '商品列表、分类管理、组合商品、发布' },
+  { key: 'orders', label: '订单', note: '订单检索、详情与发货' },
+  { key: 'after-sales', label: '售后', note: '退款台账（只读）' },
+  { key: 'shipments', label: '发货', note: '待发货/已发货工作台' },
+  { key: 'marketing', label: '营销', note: '首页轮播管理与发布' },
+  { key: 'data', label: '数据', note: '交易分析与商品表现' },
+  { key: 'settings', label: '设置', note: '发布记录与权限分配' },
+])
+
+/** 常用角色模板：开发者可按模板一键分配，再按需微调 */
+export const MP_CONSOLE_PRESETS = Object.freeze([
+  { key: 'all', label: '全部权限', modules: [...MP_CONSOLE_MODULE_KEYS] },
+  { key: 'ops', label: '运营', modules: ['overview', 'products', 'orders', 'after-sales', 'marketing', 'data'] },
+  { key: 'support', label: '客服', modules: ['overview', 'orders', 'after-sales'] },
+  { key: 'readonly', label: '只读观察', modules: ['overview', 'data'] },
+  { key: 'none', label: '无权限', modules: [] },
+])
+
+function defaultMpConsoleModules(role, modules) {
+  if (role === 'developer' || role === 'admin' || role === 'finance') {
+    return Object.fromEntries(MP_CONSOLE_MODULE_KEYS.map((key) => [key, true]))
+  }
+  if (role === 'manager' && modules[MODULE_KEYS.PRODUCT_CENTER] === true) {
+    return Object.fromEntries(MP_CONSOLE_MODULE_KEYS.map((key) => [key, true]))
+  }
+  return Object.fromEntries(MP_CONSOLE_MODULE_KEYS.map((key) => [key, false]))
+}
+
+/**
+ * mpConsole = { modules, explicit, updatedAt, updatedBy }
+ * explicit=true 表示由开发者在管理台显式分配过，优先级高于角色默认。
+ * 开发者账号强制保留 settings（权限分配入口），避免把所有人锁在门外。
+ */
+export function normalizeMpConsole(value, role, modules) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : null
+  const explicit = Boolean(source && source.modules && typeof source.modules === 'object')
+  const defaults = defaultMpConsoleModules(role, modules)
+  const assigned = {}
+  for (const key of MP_CONSOLE_MODULE_KEYS) {
+    assigned[key] = explicit
+      ? source.modules[key] === true
+      : defaults[key] === true
+  }
+  if (role === 'developer') assigned.settings = true
+  return {
+    modules: assigned,
+    explicit,
+    updatedAt: source && typeof source.updatedAt === 'string' ? source.updatedAt : '',
+    updatedBy: source && typeof source.updatedBy === 'string' ? source.updatedBy : '',
+  }
+}
+
+export function mpConsoleModulesOf(user) {
+  if (!user || user.status === 'disabled') {
+    return Object.fromEntries(MP_CONSOLE_MODULE_KEYS.map((key) => [key, false]))
+  }
+  return normalizeAccountPermissions(user.permissions, user.role, user.assetCenter === true).mpConsole.modules
+}
+
+export function hasMpConsoleAccess(user, moduleKey) {
+  if (!MP_CONSOLE_MODULE_KEYS.includes(moduleKey)) return false
+  return mpConsoleModulesOf(user)[moduleKey] === true
+}
+
+export function canEnterMpConsole(user) {
+  return MP_CONSOLE_MODULE_KEYS.some((key) => hasMpConsoleAccess(user, key))
+}
+
+/** 仅在职开发者可以分配管理台权限（与 /admin/users 的账号治理同口径） */
+export function canManageMpConsoleAccess(user) {
+  return Boolean(user && user.status !== 'disabled' && user.role === 'developer')
+}
+
 const MANAGER_DEFAULTS = Object.freeze([
   MODULE_KEYS.OVERVIEW, MODULE_KEYS.ANALYSIS, MODULE_KEYS.STAFF, MODULE_KEYS.STAFF_PAYROLL,
   MODULE_KEYS.STORE_ENTRY, MODULE_KEYS.STORE_SCHEDULE, MODULE_KEYS.STORE_MAILING, MODULE_KEYS.STORE_POS,
@@ -196,6 +279,7 @@ export function normalizeAccountPermissions(value, role = 'staff', legacyAssetCe
   const modules = normalizeModules(source.modules, role, legacyAssetCenter)
   return {
     modules,
+    mpConsole: normalizeMpConsole(source.mpConsole, role, modules),
     purchaseManage: role === 'developer' || source.purchaseManage === true,
     [ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL]:
       source[ACCOUNT_PERMISSION_KEYS.INVENTORY_TRANSFER_ALL] === true,

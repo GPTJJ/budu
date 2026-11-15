@@ -1087,6 +1087,8 @@ export function createApp({ onlineCheckoutRuntime = null, storeServiceRuntime = 
     if (target.role === 'cashier') return res.status(400).json({ error: '门店收银固定仅开放 POS' })
     const permissions = normalizeAccountPermissions({
       ...req.body,
+      // 账号管理页不编辑小程序管理台授权时，保留原值，避免被重置为角色默认
+      mpConsole: req.body.mpConsole ?? target.permissions?.mpConsole,
       sweetCardProductionTest: hasSweetCardProductionTestAccess(target),
     }, target.role, target.assetCenter === true)
     const updated = await updateUser(target.id, {

@@ -39,12 +39,10 @@ export default function PublishRecordBoard({ onGo }) {
     setLoading(true)
     setError('')
     try {
-      const [prodRes, bannerRes] = await Promise.all([
-        api('/v2/online-catalog/products'),
-        api('/v2/online-catalog/banners'),
-      ])
-      setProducts(prodRes.products || [])
-      setPublish(bannerRes.publish || null)
+      // 设置模块专用接口：只读发布状态，不需要商品/轮播的写权限
+      const res = await api('/v2/online-catalog/publish-records')
+      setProducts(res.products || [])
+      setPublish(res.banner || null)
     } catch (err) {
       setError(err.message || '加载发布记录失败')
     } finally {
@@ -140,7 +138,7 @@ export default function PublishRecordBoard({ onGo }) {
               ) : !rows.length ? (
                 <tr><td colSpan={4}><div className="px-4 py-14 text-center text-xs text-slate-400">还没有商品档案</div></td></tr>
               ) : rows.map((product) => (
-                <tr key={product.id} className="border-b border-slate-100 last:border-0">
+                <tr key={product.mpId} className="border-b border-slate-100 last:border-0">
                   <td className="px-4 py-3">
                     <div className="text-sm font-medium text-slate-700">{product.title}</div>
                     <div className="mt-0.5 font-mono text-[11px] text-slate-400">{product.mpId}</div>
@@ -164,7 +162,7 @@ export default function PublishRecordBoard({ onGo }) {
           ) : !rows.length ? (
             <div className="px-4 py-14 text-center text-xs text-slate-400">还没有商品档案</div>
           ) : rows.map((product) => (
-            <div key={product.id} className="px-4 py-3">
+            <div key={product.mpId} className="px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-700">{product.title}</span>
                 <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${STATE_STYLE[product.publishState] || STATE_STYLE.UNPUBLISHED}`}>
