@@ -11,10 +11,10 @@ const RANGES = [{ key: 7, label: '近 7 天' }, { key: 30, label: '近 30 天' }
 
 function Kpi({ label, value, hint }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="text-[11px] text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-800">{value}</div>
-      {hint ? <div className="mt-1 text-[11px] text-slate-400">{hint}</div> : null}
+    <div className="rounded-2xl border border-slate-200 bg-white p-3 lg:p-4">
+      <div className="text-[10px] text-slate-500 lg:text-[11px]">{label}</div>
+      <div className="mt-1 text-xl font-semibold tracking-tight text-slate-800 lg:text-2xl">{value}</div>
+      {hint ? <div className="mt-1 text-[10px] text-slate-400 lg:text-[11px]">{hint}</div> : null}
     </div>
   )
 }

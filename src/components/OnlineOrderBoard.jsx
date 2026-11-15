@@ -160,7 +160,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
       {error ? <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-xs text-rose-700">{error}</div> : null}
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <div className="overflow-x-auto">
+        <div className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[880px]">
           <thead>
             <tr className="border-b border-slate-100 bg-[#FEFDFC] text-left text-[11px] text-slate-500">
@@ -199,6 +199,27 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
             ))}
           </tbody>
         </table>
+        </div>
+        <div className="divide-y divide-slate-100 md:hidden">
+          {loading ? (
+            <div className="px-4 py-14 text-center text-xs text-slate-400">加载中…</div>
+          ) : empty ? (
+            <div className="px-4 py-14 text-center text-xs text-slate-400">没有符合条件的订单</div>
+          ) : rows.map((row) => (
+            <button key={row.id} type="button" onClick={() => openDetail(row.id)} className="block w-full px-4 py-3 text-left active:bg-slate-50">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-slate-700">{row.orderNo}</span>
+                <StatePill state={row.state} label={row.stateLabel} />
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-xs text-slate-600">{row.customer?.name} · {fmtDate(row.createdAt)}</span>
+                <span className="shrink-0 text-sm font-medium text-slate-800">{formatCents(row.totalCents)}</span>
+              </div>
+              <div className="mt-1 truncate text-[11px] text-slate-400">
+                {row.lines.map((line) => `${line.name}×${line.quantity}`).join('，')} · 共 {row.lineCount} 件{row.refund ? ` · 已退 ${formatCents(row.refund.totalCents)}` : ''}
+              </div>
+            </button>
+          ))}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-2.5 text-[11px] text-slate-400">
           <span>共 {total} 笔</span>

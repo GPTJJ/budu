@@ -408,7 +408,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
               key={item.key}
               type="button"
               onClick={() => go(item.key)}
-              className={`flex min-w-[40px] flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] ${active ? 'text-budu-600' : 'text-slate-500 active:text-slate-700'}`}
+              className={`flex min-w-[34px] flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] ${active ? 'text-budu-600' : 'text-slate-500 active:text-slate-700'}`}
             >
               <Icon size={18} strokeWidth={active ? 2.2 : 1.7} />
               <span className="leading-none">{item.label}</span>
