@@ -1515,7 +1515,7 @@ onlineCatalogRouter.get('/online-catalog/order-archive', wrap(async (req, res) =
     ]
   }
 
-  const [total, rows, grouped, paid] = await Promise.all([
+  const [total, rows, grouped, paid, net] = await Promise.all([
     prisma.onlineOrderArchive.count({ where }),
     prisma.onlineOrderArchive.findMany({
       where,
@@ -1524,6 +1524,7 @@ onlineCatalogRouter.get('/online-catalog/order-archive', wrap(async (req, res) =
       take: ORDER_PAGE_SIZE,
     }),
     prisma.onlineOrderArchive.groupBy({ by: ['status'], _count: { _all: true } }),
+    prisma.onlineOrderArchive.aggregate({ where: { paidAt: { not: null } }, _count: { _all: true }, _sum: { paidCents: true } }),
     prisma.onlineOrderArchive.aggregate({
       where: { status: { in: ['PENDING_SHIPMENT', 'PAID', 'SHIPPED', 'PENDING_REVIEW', 'COMPLETED'] } },
       _count: { _all: true },
@@ -1541,6 +1542,8 @@ onlineCatalogRouter.get('/online-catalog/order-archive', wrap(async (req, res) =
       byState: Object.fromEntries(grouped.map((group) => [group.status, group._count._all])),
       paidOrders: paid._count._all,
       paidCents: String(paid._sum.paidCents || 0),
+      netOrders: net._count._all,
+      netCents: String(net._sum.paidCents || 0),
     },
     orders: rows.map(serializeArchiveOrder),
   })

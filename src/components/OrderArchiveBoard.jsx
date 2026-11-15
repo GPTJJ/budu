@@ -59,7 +59,7 @@ export default function OrderArchiveBoard() {
   const [page, setPage] = useState(1)
   const [rows, setRows] = useState([])
   const [total, setTotal] = useState(0)
-  const [stats, setStats] = useState({ all: 0, paidOrders: 0, paidCents: '0' })
+  const [stats, setStats] = useState({ all: 0, paidOrders: 0, paidCents: '0', netOrders: 0, netCents: '0' })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [detail, setDetail] = useState(null)
@@ -75,7 +75,7 @@ export default function OrderArchiveBoard() {
       const res = await api(`/v2/online-catalog/order-archive?${params.toString()}`)
       setRows(res.orders || [])
       setTotal(res.total || 0)
-      setStats(res.stats || { all: 0, paidOrders: 0, paidCents: '0' })
+      setStats(res.stats || { all: 0, paidOrders: 0, paidCents: '0', netOrders: 0, netCents: '0' })
     } catch (err) {
       setError(err.message || '加载历史订单失败')
     } finally {
@@ -93,8 +93,8 @@ export default function OrderArchiveBoard() {
       <div className="mb-3 grid grid-cols-3 gap-2.5 lg:gap-3">
         {[
           { label: '历史订单', value: stats.all, hint: '上线以来全部' },
-          { label: '已支付', value: stats.paidOrders, hint: '不含待付款/已取消' },
-          { label: '成交金额', value: formatCents(stats.paidCents), hint: '已支付实付合计' },
+          { label: '已支付', value: stats.paidOrders, hint: '含已退款订单' },
+          { label: '有效成交', value: formatCents(stats.netCents), hint: '已退款订单不计入' },
         ].map((item) => (
           <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-3 lg:p-4">
             <div className="text-[11px] text-slate-500">{item.label}</div>
