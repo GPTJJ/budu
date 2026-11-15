@@ -62,7 +62,7 @@ const MODULES = [
       { key: 'orders-shipped', label: '已发货', state: 'SHIPPED' },
       { key: 'orders-refunded', label: '已退款', state: 'REFUNDED' },
       { key: 'orders-cancelled', label: '已取消', state: 'CANCELLED' },
-      { key: 'orders-archive', label: '历史订单' },
+      { key: 'orders-archive', label: '历史订单', desc: '只读归档：上线以来的小程序历史订单，可检索核对，不影响结算、发货与退款' },
     ],
   },
   {
@@ -463,7 +463,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
               )
             })}
           </div>
-          <PageHead title={view.label === '商品列表' ? '商品' : view.label} desc={module.desc} />
+          <PageHead title={view.label === '商品列表' ? '商品' : view.label} desc={view.desc || module.desc} />
           {renderView()}
         </div>
       </main>
