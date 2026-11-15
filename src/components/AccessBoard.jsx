@@ -120,7 +120,12 @@ export default function AccessBoard() {
                 ) : !sorted.length ? (
                   <tr><td colSpan={4}><div className="px-4 py-14 text-center text-xs text-slate-400">没有可选账号</div></td></tr>
                 ) : sorted.map((user) => (
-                  <tr key={user.id} className={`border-b border-slate-100 last:border-0 ${editing?.id === user.id ? 'bg-budu-50/40' : ''}`}>
+                  <tr
+                    key={user.id}
+                    onClick={() => { if (!user.self) openEdit(user) }}
+                    title={user.self ? '开发者本人权限固定，不可自改' : '点击配置该账号的模块权限'}
+                    className={`border-b border-slate-100 last:border-0 ${user.self ? '' : 'cursor-pointer hover:bg-slate-50/70'} ${editing?.id === user.id ? 'bg-budu-50/40' : ''}`}
+                  >
                     <td className="px-4 py-3">
                       <div className="text-sm font-medium text-slate-700">{user.displayName || user.username}{user.self ? <span className="ml-1 rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-400">本人</span> : null}</div>
                       <div className="mt-0.5 font-mono text-[11px] text-slate-400">{user.username}</div>
@@ -131,7 +136,13 @@ export default function AccessBoard() {
                       {user.explicit ? <span className="ml-1 rounded bg-budu-50 px-1 py-0.5 text-[10px] text-budu-600">已分配</span> : <span className="ml-1 rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-400">角色默认</span>}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button type="button" disabled={user.self} onClick={() => openEdit(user)} className="h-8 rounded-lg border border-slate-200 px-2.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-30">配置</button>
+                      <button
+                        type="button"
+                        disabled={user.self}
+                        title={user.self ? '开发者本人权限固定，不可自改' : '配置模块权限'}
+                        onClick={(event) => { event.stopPropagation(); openEdit(user) }}
+                        className="h-8 rounded-lg border border-slate-200 px-2.5 text-xs text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
+                      >{user.self ? '不可自改' : '配置'}</button>
                     </td>
                   </tr>
                 ))}
@@ -165,7 +176,7 @@ export default function AccessBoard() {
           {!editing ? (
             <div className="py-10 text-center">
               <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400"><ShieldCheck size={20} /></div>
-              <div className="text-sm text-slate-600">选择左侧账号开始配置</div>
+              <div className="text-sm text-slate-600">点击左侧任意账号行开始配置</div>
               <p className="mx-auto mt-1 max-w-xs text-[11px] leading-relaxed text-slate-400">可以先用角色模板一键分配，再按模块微调；保存后立即生效。</p>
             </div>
           ) : (
