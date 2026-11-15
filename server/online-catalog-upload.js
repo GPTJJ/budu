@@ -67,18 +67,30 @@ export async function uploadCatalogImage(dataUrl, { client = null, now = new Dat
   const fileId = response?.fileID || response?.fileId || ''
   if (!fileId) throw httpError('云存储未返回文件标识', 502)
 
-  // 服务端直传的对象客户端无法用 cloud:// 解析（空白图）。交给云函数
-  // （环境管理员身份）转存一份，用返回的 fileID 落库；失败则保留原值，
-  // 由 catalog 的临时链接层兜底。
-  let finalFileId = fileId
-  try {
-    const copied = await cloudbase.callFunction({ name: 'mediaUpload', data: { fileID: fileId, deleteSource: true } })
-    const payload = copied?.result || copied
-    if (payload && payload.ok === true && typeof payload.fileID === 'string' && payload.fileID) {
-      finalFileId = payload.fileID
+  // 服务端直传的对象，小程序端无法用 cloud:// 解析（会显示空白图），必须交给
+  // 云函数（环境管理员身份）转存一次，再用它返回的 fileID 落库。
+  // 转存失败时**必须报错**：静默回退原 fileID 会把一张打不开的图发布到线上，
+  // 而这正是 2026-11-15 图片空白事故的形态。
+  let lastError = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const copied = await cloudbase.callFunction({ name: 'mediaUpload', data: { fileID: fileId, deleteSource: true } })
+      const payload = copied?.result || copied
+      if (payload && payload.ok === true && typeof payload.fileID === 'string' && payload.fileID) {
+        return { fileId: payload.fileID, cloudPath, size: buffer.length, ext }
+      }
+      lastError = new Error(payload?.msg || '图片转存未返回文件标识')
+    } catch (error) {
+      lastError = error
     }
-  } catch {
-    // 云函数不可用时保持原 fileID
   }
-  return { fileId: finalFileId, cloudPath, size: buffer.length, ext }
+
+  // 转存彻底失败：清掉刚上传的临时对象，避免留下客户端读不到的死文件
+  try {
+    await cloudbase.deleteFile({ fileList: [fileId] })
+  } catch {
+    // 清理失败不影响下面的报错
+  }
+  console.error('[online-catalog] media transfer failed', { cloudPath, reason: lastError?.message })
+  throw httpError('图片转存失败，本次上传未保存，请重试', 502)
 }

@@ -247,18 +247,54 @@ test('upload: 云路径按月分目录且文件名不可预测', () => {
   assert.notEqual(path, buildCloudPath('jpg', new Date('2026-11-14T10:00:00Z')))
 })
 
-test('upload: 成功时把文件写进云存储并返回 fileID', async () => {
+test('upload: 直传后交给 mediaUpload 转存，落库用转存后的 fileID', async () => {
   const calls = []
+  const transfers = []
   const client = {
     async uploadFile(payload) {
       calls.push(payload)
       return { fileID: `cloud://env.bucket/${payload.cloudPath}` }
     },
+    async callFunction({ name, data }) {
+      transfers.push({ name, ...data })
+      return { result: { ok: true, fileID: 'cloud://env.bucket/online-catalog/media/202611/converted.png' } }
+    },
   }
   const result = await uploadCatalogImage(PNG_1PX, { client })
-  assert.match(result.fileId, /^cloud:\/\/env\.bucket\/online-catalog\/media\/\d{6}\/[0-9a-f-]{36}\.png$/)
+  // 原始直传的 fileID 客户端解析不了，必须用转存后的
+  assert.equal(result.fileId, 'cloud://env.bucket/online-catalog/media/202611/converted.png')
   assert.equal(calls.length, 1)
   assert.ok(calls[0].fileContent.length > 0)
+  assert.equal(transfers.length, 1)
+  assert.equal(transfers[0].name, 'mediaUpload')
+  assert.match(transfers[0].fileID, /^cloud:\/\/env\.bucket\/online-catalog\/media\//)
+})
+
+test('upload: 转存第一次失败会重试，成功即返回', async () => {
+  let attempts = 0
+  const client = {
+    async uploadFile(payload) { return { fileID: `cloud://env.bucket/${payload.cloudPath}` } },
+    async callFunction() {
+      attempts += 1
+      if (attempts === 1) throw new Error('transient')
+      return { result: { ok: true, fileID: 'cloud://env.bucket/online-catalog/media/202611/retry.png' } }
+    },
+  }
+  const result = await uploadCatalogImage(PNG_1PX, { client })
+  assert.equal(attempts, 2)
+  assert.match(result.fileId, /retry\.png$/)
+})
+
+test('upload: 转存彻底失败时报错并清理临时对象，绝不回退原 fileID', async () => {
+  const deleted = []
+  const client = {
+    async uploadFile(payload) { return { fileID: `cloud://env.bucket/${payload.cloudPath}` } },
+    async callFunction() { throw new Error('function not deployed') },
+    async deleteFile({ fileList }) { deleted.push(...fileList); return { fileList: [] } },
+  }
+  await assert.rejects(() => uploadCatalogImage(PNG_1PX, { client }), /图片转存失败/)
+  assert.equal(deleted.length, 1)
+  assert.match(deleted[0], /^cloud:\/\/env\.bucket\/online-catalog\/media\//)
 })
 
 test('upload: 云存储异常或无 fileID 时报错而不是静默成功', async () => {
