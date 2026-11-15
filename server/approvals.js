@@ -25,6 +25,9 @@ import {
   validateFormData,
   resolveCcUsers,
   genRequestNo,
+  resolveApprovalChain,
+  APPROVAL_CHAIN,
+  APPROVAL_CC_USERS,
 } from './approvals-core.js'
 
 export const approvalRouter = Router()
@@ -117,6 +120,13 @@ export async function ensureApprovalTemplates() {
       ],
     },
   ]
+  // 所有模板统一使用全局审批链（胡东辉 → 杨梦彤），抄送含提交人与金晶
+  const GLOBAL_STEPS = APPROVAL_CHAIN.map((username) => ({ username }))
+  const GLOBAL_CC = [{ type: 'submitter' }, ...APPROVAL_CC_USERS.map((username) => ({ type: 'username', username }))]
+  for (const t of templates) {
+    t.approverRule = { type: 'steps', steps: GLOBAL_STEPS }
+    t.ccRule = GLOBAL_CC
+  }
   for (const t of templates) {
     const exists = await prisma.approvalTemplate.findUnique({ where: { key: t.key } })
     if (exists) {
@@ -144,21 +154,18 @@ async function userCtx() {
   return { users, roleUsers, staffKeyMap }
 }
 
-/** 模板的审批人列表：role=admin → 全部管理员；若该角色无账号则回退开发者（保证流程可跑） */
-function approverUsernames(template, roleUsers) {
+/**
+ * 审批链：全局步骤（胡东辉 → 杨梦彤），跳过提交人本人，过滤掉不存在的账号。
+ * 旧模板的 role/username 规则仍兼容（仅作兜底）。
+ */
+function approverUsernames(template, users, submitter) {
   const rule = template?.approverRule || {}
-  if (rule.type === 'username') return [rule.username]
-  if (rule.type === 'role') {
-    const names = (roleUsers[rule.role] || []).map((u) => u.username)
-    if (names.length > 0) return names
-    // 回退：超管角色（开发者/财务/管理员）任意一个
-    for (const fallback of ['developer', 'finance', 'admin']) {
-      const fb = (roleUsers[fallback] || []).map((u) => u.username)
-      if (fb.length > 0) return fb
-    }
-    return []
-  }
-  return []
+  let list = []
+  if (rule.type === 'steps') list = (rule.steps || []).map((step) => step?.username).filter(Boolean)
+  else if (rule.type === 'username') list = [rule.username]
+  else if (rule.type === 'role') list = (users || []).filter((u) => u.role === rule.role).map((u) => u.username)
+  const known = new Set((users || []).map((u) => u.username))
+  return list.filter((username) => username && known.has(username) && username !== submitter)
 }
 
 function serialize(row) {
@@ -378,7 +385,7 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
   const id = `ar-${crypto.randomUUID()}`
   const requestNo = genRequestNo(new Date(), todayCount + 1)
   const ctx = await userCtx()
-  const approvers = approverUsernames(template, ctx.roleUsers)
+  const approvers = approverUsernames(template, ctx.users, req.user.username)
   if (submit && approvers.length === 0) throw httpError('审批人未配置，无法提交')
 
   const created = await prisma.$transaction(async (tx) => {
@@ -413,10 +420,11 @@ approvalRouter.post('/approvals/requests', wrap(async (req, res) => {
       data: { id: `al-${crypto.randomUUID()}`, requestId: id, action: submit ? 'submit' : 'create', username: req.user.username, detail: submit ? '提交审批' : '创建草稿' },
     })
     if (submit) {
-      for (const username of approvers) {
+      for (const [index, username] of approvers.entries()) {
         await tx.approvalNode.create({
-          data: { id: `an-${crypto.randomUUID()}`, requestId: id, nodeIndex: 1, approverUsername: username },
+          data: { id: `an-${crypto.randomUUID()}`, requestId: id, nodeIndex: index + 1, approverUsername: username, status: index === 0 ? 'pending' : 'waiting' },
         })
+        if (index > 0) continue
         await tx.approvalNotification.create({
           data: {
             id: `anot-${crypto.randomUUID()}`,
@@ -599,7 +607,7 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
   if (!canSubmit(req.user, request)) throw httpError('当前状态不可提交', 403)
   const template = await prisma.approvalTemplate.findUnique({ where: { key: request.templateKey } })
   const ctx = await userCtx()
-  const approvers = approverUsernames(template, ctx.roleUsers)
+  const approvers = approverUsernames(template, ctx.users, req.user.username)
   if (approvers.length === 0) throw httpError('审批人未配置，无法提交')
   const wasRejected = request.status === 'rejected'
   // 额外抄送人：优先使用本次提交携带的，否则沿用草稿已保存的
@@ -613,10 +621,11 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
       data: { status: 'pending', approvedAt: null, archivedAt: null },
     })
     if (claimed.count !== 1) throw httpError('单据状态或内容已变化，请刷新后重试', 409)
-    for (const username of approvers) {
+    for (const [index, username] of approvers.entries()) {
       await tx.approvalNode.create({
-        data: { id: `an-${crypto.randomUUID()}`, requestId: request.id, nodeIndex: 1, approverUsername: username },
+        data: { id: `an-${crypto.randomUUID()}`, requestId: request.id, nodeIndex: index + 1, approverUsername: username, status: index === 0 ? 'pending' : 'waiting' },
       })
+      if (index > 0) continue
       await tx.approvalNotification.create({
         data: {
           id: `anot-${crypto.randomUUID()}`,
@@ -640,8 +649,8 @@ approvalRouter.post('/approvals/requests/:id/submit', wrap(async (req, res) => {
       data: { id: `al-${crypto.randomUUID()}`, requestId: request.id, action: 'submit', username: req.user.username, detail: wasRejected ? '驳回后重新提交' : '提交审批' },
     })
   })
-  // 仅在提交事务成功后发送通知中心消息，避免回滚留下虚假待办。
-  for (const username of approvers) {
+  // 仅在提交事务成功后发送通知中心消息（只通知当前审批人），避免回滚留下虚假待办。
+  for (const username of approvers.slice(0, 1)) {
     notify({
       username,
       templateKey: 'approval_todo',
@@ -685,38 +694,82 @@ approvalRouter.post('/approvals/requests/:id/decide', wrap(async (req, res) => {
   const comment = text(body.comment, 300, '审批意见')
   if (action === 'reject' && comment.length < 2) throw httpError('驳回时必须填写审批意见')
   const ctx = await userCtx()
+  // 顺序审批：只允许「当前待审节点」的审批人操作
+  const currentNode = await prisma.approvalNode.findFirst({
+    where: { requestId: request.id, status: 'pending' },
+    orderBy: { nodeIndex: 'asc' },
+  })
+  if (!currentNode) throw httpError('审批节点异常，请联系管理员', 409)
+  if (currentNode.approverUsername !== req.user.username) {
+    const who = (ctx.users.find((u) => u.username === currentNode.approverUsername) || {}).displayName
+      || currentNode.approverUsername
+    throw httpError(`当前轮到 ${who} 审批，你暂不能操作`, 403)
+  }
+
+  let nextApprover = null
   await prisma.$transaction(async (tx) => {
-    const updated = await tx.approvalRequest.updateMany({
-      where: { id: request.id, status: 'pending' }, // 防并发重复审批
-      data: { status: action === 'approve' ? 'approved' : 'rejected', approvedAt: action === 'approve' ? new Date() : null },
+    const acted = await tx.approvalNode.updateMany({
+      where: { id: currentNode.id, status: 'pending' }, // 防并发重复审批
+      data: { status: action === 'approve' ? 'approved' : 'rejected', comment, actedAt: new Date() },
     })
-    if (updated.count !== 1) throw httpError('单据状态已变化，请刷新后重试', 409)
-    // 更新节点
-    const node = await tx.approvalNode.findFirst({
-      where: { requestId: request.id, status: 'pending' },
-      orderBy: { nodeIndex: 'asc' },
-    })
-    if (node) {
-      await tx.approvalNode.update({
-        where: { id: node.id },
-        data: { status: action === 'approve' ? 'approved' : 'rejected', comment, actedAt: new Date() },
+    if (acted.count !== 1) throw httpError('审批状态已变化，请刷新后重试', 409)
+
+    if (comment) {
+      await tx.approvalComment.create({
+        data: { id: `ac-${crypto.randomUUID()}`, requestId: request.id, nodeId: currentNode.id, username: req.user.username, userRole: req.user.role, content: comment },
       })
-      if (comment) {
-        await tx.approvalComment.create({
-          data: { id: `ac-${crypto.randomUUID()}`, requestId: request.id, nodeId: node.id, username: req.user.username, userRole: req.user.role, content: comment },
-        })
+    }
+
+    // 通过：还有下一级就流转，否则整单通过；驳回：直接结束
+    let final = action === 'reject'
+    if (action === 'approve') {
+      const next = await tx.approvalNode.findFirst({
+        where: { requestId: request.id, status: 'waiting' },
+        orderBy: { nodeIndex: 'asc' },
+      })
+      if (next) {
+        await tx.approvalNode.update({ where: { id: next.id }, data: { status: 'pending' } })
+        nextApprover = next.approverUsername
+      } else {
+        final = true
       }
     }
+
+    if (final) {
+      const updated = await tx.approvalRequest.updateMany({
+        where: { id: request.id, status: 'pending' }, // 防并发重复审批
+        data: { status: action === 'approve' ? 'approved' : 'rejected', approvedAt: action === 'approve' ? new Date() : null },
+      })
+      if (updated.count !== 1) throw httpError('单据状态已变化，请刷新后重试', 409)
+    }
+
     await tx.approvalLog.create({
       data: {
         id: `al-${crypto.randomUUID()}`,
         requestId: request.id,
         action: action === 'approve' ? 'approve' : 'reject',
         username: req.user.username,
-        detail: action === 'approve' ? '审批通过' : `审批驳回：${comment}`,
+        detail: action === 'approve'
+          ? (nextApprover ? `审批通过，流转至 ${nextApprover}` : '审批通过（末级）')
+          : `审批驳回：${comment}`,
       },
     })
-    // 通知提交人（结果）
+
+    if (nextApprover) {
+      await tx.approvalNotification.create({
+        data: {
+          id: `anot-${crypto.randomUUID()}`,
+          requestId: request.id,
+          username: nextApprover,
+          type: 'todo',
+          title: '待你审批',
+          content: `${req.user.username} 已通过${template.name}申请「${request.title}」，请继续审批`,
+        },
+      })
+      return
+    }
+
+    // 末级通过 / 驳回：通知提交人（结果）
     await tx.approvalNotification.create({
       data: {
         id: `anot-${crypto.randomUUID()}`,
@@ -743,7 +796,7 @@ approvalRouter.post('/approvals/requests/:id/decide', wrap(async (req, res) => {
       refType: 'approval',
       refId: request.id,
     }).catch(() => {})
-    // 通过 → 通知抄送人（提交时已建立抄送关系：提交人 + 财务 + 手动添加），排除提交人本人（结果通知已覆盖）
+    // 通过 → 通知抄送人（提交时已建立抄送关系：提交人 + 金晶 + 手动添加），排除提交人本人
     if (action === 'approve') {
       const ccRows = await tx.approvalCc.findMany({ where: { requestId: request.id } })
       for (const c of ccRows) {
@@ -770,6 +823,18 @@ approvalRouter.post('/approvals/requests/:id/decide', wrap(async (req, res) => {
       }
     }
   })
+  // 流转到下一级：通知下一个审批人（事务外发送，避免回滚留下虚假待办）
+  if (nextApprover) {
+    notify({
+      username: nextApprover,
+      templateKey: 'approval_todo',
+      data: { title: request.title, submitterName: request.submitterName || request.submitterUsername, templateName: template.name },
+      priority: 'high',
+      target: 'approval',
+      refType: 'approval',
+      refId: request.id,
+    }).catch(() => {})
+  }
   res.json({ ok: true, request: serialize(await prisma.approvalRequest.findUnique({ where: { id: request.id } })) })
 }))
 

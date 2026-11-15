@@ -22,11 +22,8 @@ function Timeline({ detail, nameOf }) {
   const { request, nodes, ccs, logs } = detail
   const submitLog = [...(logs || [])].reverse().find((l) => l.action === 'submit')
   const createLog = [...(logs || [])].reverse().find((l) => l.action === 'create')
-  // 驳回重提后存在多个节点：优先待审批节点；否则取 actedAt 最新的审批结果
-  const pendingNode = (nodes || []).find((n) => n.status === 'pending')
-  const node =
-    pendingNode ||
-    [...(nodes || [])].sort((a, b) => String(b.actedAt || '').localeCompare(String(a.actedAt || '')))[0]
+  // 顺序审批：按 nodeIndex 展示每一级
+  const orderedNodes = [...(nodes || [])].sort((a, b) => (a.nodeIndex || 0) - (b.nodeIndex || 0))
   const ccUsers = ccs || []
   const submittedAt = submitLog?.createdAt || createLog?.createdAt || request.createdAt
 
@@ -50,25 +47,35 @@ function Timeline({ detail, nameOf }) {
           </div>
         </div>
         {line()}
-        {/* 审批节点 */}
-        <div className="flex items-start gap-3">
-          {node ? (
-            dot(node.status !== 'pending', node.status === 'rejected' ? 'bg-rose-500' : 'bg-emerald-500')
-          ) : (
-            dot(false)
-          )}
-          <div className="min-w-0 flex-1 pb-1">
-            <p className="text-[15px] font-medium text-slate-800">
-              {node ? '管理员审批' : '审批'}
-            </p>
-            <p className="text-xs text-slate-400">
-              {node ? nameOf(node.approverUsername) : '管理员'}
-              {node ? ` · ${node.status === 'pending' ? '待处理' : node.status === 'approved' ? '已通过' : '已驳回'}` : '待处理'}
-              {node?.actedAt ? ` · ${fmtShortTime(node.actedAt)}` : ''}
-            </p>
-            {node?.comment && <p className="mt-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs text-slate-600">{node.comment}</p>}
-          </div>
-        </div>
+        {/* 审批节点：逐级展示 */}
+        {(orderedNodes.length ? orderedNodes : [null]).map((node, index) => {
+          const statusText = !node
+            ? '待处理'
+            : node.status === 'approved'
+              ? '已通过'
+              : node.status === 'rejected'
+                ? '已驳回'
+                : node.status === 'waiting'
+                  ? '等待上一级'
+                  : '待处理'
+          const done = node && node.status !== 'pending' && node.status !== 'waiting'
+          return (
+            <div key={node?.id || `node-${index}`} className="flex items-start gap-3">
+              {dot(done, node?.status === 'rejected' ? 'bg-rose-500' : 'bg-emerald-500')}
+              <div className="min-w-0 flex-1 pb-1">
+                <p className="text-[15px] font-medium text-slate-800">
+                  {node ? `第${(node.nodeIndex || index + 1)}级审批` : '审批'}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {node ? nameOf(node.approverUsername) : '待分配'}
+                  {` · ${statusText}`}
+                  {node?.actedAt ? ` · ${fmtShortTime(node.actedAt)}` : ''}
+                </p>
+                {node?.comment && <p className="mt-1 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs text-slate-600">{node.comment}</p>}
+              </div>
+            </div>
+          )
+        })}
         {line()}
         {/* 抄送 */}
         <div className="flex items-start gap-3">

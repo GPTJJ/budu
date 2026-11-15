@@ -21,16 +21,18 @@ function FlowSection({ template, user, extraCc, onAddCc, onRemoveCc, payrollNoti
     const c = (candidates || []).find((x) => x.username === uname)
     return c ? c.name : uname
   }
-  // 审批人：规则角色对应的账号持有人姓名（如管理员张三）
-  const approverNames = (() => {
-    if (rule.type === 'username') return [nameOf(rule.username)]
-    if (rule.type === 'role') {
-      const list = (candidates || []).filter((c) => c.role === rule.role)
-      if (list.length > 0) return list.map((c) => c.name)
-    }
+  // 审批人：全局审批链（胡东辉 → 杨梦彤），按顺序展示；提交人本人不参与审批
+  const chainUsernames = (() => {
+    if (rule.type === 'steps') return (rule.steps || []).map((step) => step?.username).filter(Boolean)
+    if (rule.type === 'username') return [rule.username]
+    if (rule.type === 'role') return (candidates || []).filter((c) => c.role === rule.role).map((c) => c.username)
     return []
   })()
-  const approver = approverNames.length > 0 ? `${rule.role === 'admin' ? '管理员' : rule.role} · ${approverNames.join('、')}` : rule.type === 'username' ? rule.username : '管理员'
+  const approverSteps = chainUsernames.filter((uname) => uname !== user?.username)
+  const selfSkipped = chainUsernames.includes(user?.username)
+  const approver = approverSteps.length > 0
+    ? `${approverSteps.map(nameOf).join('  →  ')}${selfSkipped ? '（本人提交，跳过自己）' : ''}`
+    : '无需审批（提交人即审批人）'
   // 默认抄送人（规则）：提交人 + 财务账号（显示持有人姓名）
   const defaultCc = []
   for (const r of ccRule) {
@@ -40,6 +42,8 @@ function FlowSection({ template, user, extraCc, onAddCc, onRemoveCc, payrollNoti
       else defaultCc.push({ name: '财务', tag: '默认' })
     } else if (r.type === 'submitter') {
       defaultCc.push({ name: user?.displayName || user?.username || '提交人', tag: '提交人' })
+    } else if (r.type === 'username') {
+      defaultCc.push({ name: nameOf(r.username), tag: '默认' })
     }
   }
   return (

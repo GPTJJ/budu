@@ -4,6 +4,18 @@ import { isSuperUser } from '../shared/accountPermissions.js'
 
 export const APPROVAL_STATUSES = ['draft', 'pending', 'approved', 'rejected', 'withdrawn', 'archived']
 
+/**
+ * 全局审批链（所有模板共用，按顺序逐级审批）：胡东辉 → 杨梦彤
+ * 抄送固定包含「提交人 + 金晶」，与模板自带的抄送规则合并去重。
+ */
+export const APPROVAL_CHAIN = ['budu', '杨梦彤']
+export const APPROVAL_CC_USERS = ['金晶']
+
+/** 解析某次提交的审批链：提交人本人不参与审批（不能自审），其余保持原顺序 */
+export function resolveApprovalChain(submitter, chain = APPROVAL_CHAIN) {
+  return (chain || []).filter((username) => Boolean(username) && username !== submitter)
+}
+
 /** 状态机：key = 当前状态，value = 允许转移到的状态 */
 export const APPROVAL_TRANSITIONS = {
   draft: ['pending'],
@@ -27,6 +39,7 @@ export function isApproverFor(user, request, template) {
   if (!user || !request || !template) return false
   if (request.status === 'withdrawn' || request.status === 'draft') return false
   const rule = template.approverRule || {}
+  if (rule.type === 'steps') return (rule.steps || []).some((step) => step && step.username === user.username)
   if (rule.type === 'username') return user.username === rule.username
   if (rule.type === 'role') {
     if (user.role === rule.role) return true
