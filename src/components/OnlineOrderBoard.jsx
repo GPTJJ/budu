@@ -126,34 +126,34 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         {showFilters ? (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
             {FILTERS.map((item) => (
               <button
                 key={item.key || 'all'}
                 type="button"
                 onClick={() => { setState(item.key); setPage(1) }}
-                className={`h-7 rounded-full border px-3 text-xs ${state === item.key ? 'border-budu-200 bg-budu-50 font-medium text-budu-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                className={`h-8 shrink-0 rounded-full border px-3 text-xs sm:h-7 ${state === item.key ? 'border-budu-200 bg-budu-50 font-medium text-budu-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
               >
                 {item.label}
               </button>
             ))}
           </div>
         ) : null}
-        <div className="ml-auto flex items-center gap-2">
-          <label className="flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5">
-            <Search size={14} className="text-slate-400" />
+        <div className="flex items-center gap-2 sm:ml-auto">
+          <label className="flex h-9 flex-1 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 sm:h-8 sm:flex-none">
+            <Search size={14} className="shrink-0 text-slate-400" />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { setQuery(keyword.trim()); setPage(1) } }}
               placeholder="订单号 / 顾客 ID"
-              className="w-40 border-0 bg-transparent text-xs outline-none"
+              className="w-full min-w-0 border-0 bg-transparent text-xs outline-none sm:w-40"
             />
           </label>
-          <button type="button" onClick={() => { setQuery(keyword.trim()); setPage(1) }} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50">搜索</button>
-          <button type="button" onClick={load} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50">刷新</button>
+          <button type="button" onClick={() => { setQuery(keyword.trim()); setPage(1) }} className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50 sm:h-8">搜索</button>
+          <button type="button" onClick={load} className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50 sm:h-8">刷新</button>
         </div>
       </div>
 
@@ -200,7 +200,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
           </tbody>
         </table>
         </div>
-        <div className="flex items-center justify-between border-t border-slate-100 px-4 py-2.5 text-[11px] text-slate-400">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-2.5 text-[11px] text-slate-400">
           <span>共 {total} 笔</span>
           {(() => {
             const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -228,7 +228,7 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
       {drawerOpen ? (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-slate-900/30" onClick={() => setDrawerOpen(false)} />
-          <div className="relative flex h-full w-[720px] max-w-[94vw] flex-col bg-white shadow-2xl">
+          <div className="relative flex h-full w-full flex-col bg-white shadow-2xl sm:w-[720px] sm:max-w-[94vw]">
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-6 py-4">
               <div>
                 <div className="max-w-[520px] truncate text-base font-semibold text-slate-800" title={detail?.orderNo}>{detail?.orderNo || '订单'}</div>
@@ -303,10 +303,10 @@ export default function OnlineOrderBoard({ initialState = '', title = '订单', 
                             ))}
                           </div>
                           {form.method === 'DELIVERY' ? (
-                            <div className="flex gap-2">
-                              <input value={form.carrierCode} onChange={(e) => setForm((f) => ({ ...f, carrierCode: e.target.value }))} placeholder="物流公司代码（SF）" className="h-8 w-32 rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-budu-300" />
-                              <input value={form.trackingNo} onChange={(e) => setForm((f) => ({ ...f, trackingNo: e.target.value }))} placeholder="运单号" className="h-8 flex-1 rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-budu-300" />
-                              <button type="button" disabled={fulfilling || !form.trackingNo.trim()} onClick={submitFulfill} className="inline-flex h-8 items-center gap-1 rounded-lg bg-budu-500 px-3 text-xs font-medium text-white disabled:opacity-50">
+                            <div className="flex flex-wrap gap-2">
+                              <input value={form.carrierCode} onChange={(e) => setForm((f) => ({ ...f, carrierCode: e.target.value }))} placeholder="物流公司代码（SF）" className="h-9 w-full rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-budu-300 sm:h-8 sm:w-32" />
+                              <input value={form.trackingNo} onChange={(e) => setForm((f) => ({ ...f, trackingNo: e.target.value }))} placeholder="运单号" className="h-9 min-w-0 flex-1 rounded-lg border border-slate-200 px-2 text-xs outline-none focus:border-budu-300 sm:h-8" />
+                              <button type="button" disabled={fulfilling || !form.trackingNo.trim()} onClick={submitFulfill} className="inline-flex h-9 w-full items-center justify-center gap-1 rounded-lg bg-budu-500 px-3 text-xs font-medium text-white disabled:opacity-50 sm:h-8 sm:w-auto">
                                 <Truck size={13} />{fulfilling ? '提交中…' : '确认发货'}
                               </button>
                             </div>

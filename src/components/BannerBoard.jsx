@@ -288,13 +288,13 @@ export default function BannerBoard() {
           <span>·</span>
           <span>{enabledRows.length} 条启用 / 共 {rows.length} 条</span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex w-full gap-2 sm:w-auto">
           <button type="button" onClick={openCreate} disabled={busy || rows.length >= 10}
-            className="inline-flex h-9 items-center gap-1 rounded-xl border border-slate-200 px-3 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+            className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-xl border border-slate-200 px-3 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50 sm:flex-none">
             <Plus size={15} /> 新增轮播
           </button>
           <button type="button" onClick={publishAll} disabled={busy || !enabledRows.length}
-            className="inline-flex h-9 items-center gap-1 rounded-xl bg-budu-500 px-4 text-sm font-semibold text-white disabled:opacity-50">
+            className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-xl bg-budu-500 px-4 text-sm font-semibold text-white disabled:opacity-50 sm:flex-none">
             <Send size={15} /> 同步到小程序
           </button>
         </div>
@@ -345,7 +345,7 @@ export default function BannerBoard() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-1">
+              <div className="ml-auto flex flex-wrap items-center gap-1">
                 <button type="button" title="上移" disabled={busy || index === 0} onClick={() => move(row, -1)}
                   className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30"><ArrowUp size={14} /></button>
                 <button type="button" title="下移" disabled={busy || index === list.length - 1} onClick={() => move(row, 1)}

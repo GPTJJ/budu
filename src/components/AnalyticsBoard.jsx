@@ -44,22 +44,22 @@ export default function AnalyticsBoard({ fixedDays = 0 }) {
 
   return (
     <div>
-      <div className="mb-4 flex items-center gap-1.5">
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
         {RANGES.map((range) => (
           <button
             key={range.key}
             type="button"
             disabled={Boolean(fixedDays)}
             onClick={() => setDays(range.key)}
-            className={`h-7 rounded-full border px-3 text-xs ${days === range.key ? 'border-budu-200 bg-budu-50 font-medium text-budu-700' : 'border-slate-200 bg-white text-slate-600'} disabled:opacity-60`}
+            className={`h-8 rounded-full border px-3 text-xs sm:h-7 ${days === range.key ? 'border-budu-200 bg-budu-50 font-medium text-budu-700' : 'border-slate-200 bg-white text-slate-600'} disabled:opacity-60`}
           >
             {range.label}
           </button>
         ))}
-        <span className="ml-auto text-[11px] text-slate-400">数据更新于 {new Date(data.generatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
+        <span className="w-full text-[10px] text-slate-400 sm:ml-auto sm:w-auto sm:text-[11px]">数据更新于 {new Date(data.generatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 lg:gap-3 xl:grid-cols-4">
         <Kpi label="净成交额" value={formatCents(totals.paidCents)} hint={`${totals.paidOrders} 笔已支付（已扣整单退款）`} />
         <Kpi label="订单数" value={totals.orders} hint={`取消 ${totals.cancelled} 笔`} />
         <Kpi label="客单价" value={formatCents(totals.avgOrderCents)} hint="按已支付订单的实付金额" />

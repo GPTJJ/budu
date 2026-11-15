@@ -67,20 +67,20 @@ export default function AfterSalesBoard({ initialState = '' }) {
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="flex gap-1.5">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 sm:mx-0 sm:overflow-visible sm:px-0 sm:pb-0">
           {[{ key: '', label: '全部记录' }, { key: 'PENDING', label: '处理中' }, { key: 'SETTLED', label: '已到账' }].map((item) => (
             <button
               key={item.key || 'all'}
               type="button"
               onClick={() => setStatus(item.key)}
-              className={`h-7 rounded-full border px-3 text-xs ${status === item.key ? 'border-budu-200 bg-budu-50 font-medium text-budu-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+              className={`h-8 shrink-0 rounded-full border px-3 text-xs sm:h-7 ${status === item.key ? 'border-budu-200 bg-budu-50 font-medium text-budu-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
             >
               {item.label}
             </button>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-3 text-[11px] text-slate-500">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500 sm:ml-auto">
           <span>共 <b className="text-slate-700">{summary.total}</b> 笔</span>
           <span>已到账 <b className="text-emerald-700">{summary.settled}</b></span>
           <span>合计 <b className="text-slate-700">{formatCents(summary.totalCents)}</b></span>
@@ -136,7 +136,7 @@ export default function AfterSalesBoard({ initialState = '' }) {
       {open ? (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-slate-900/30" onClick={() => setOpen(false)} />
-          <div className="relative flex h-full w-[680px] max-w-[94vw] flex-col bg-white shadow-2xl">
+          <div className="relative flex h-full w-full flex-col bg-white shadow-2xl sm:w-[680px] sm:max-w-[94vw]">
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-6 py-4">
               <div>
                 <div className="max-w-[480px] truncate font-mono text-sm font-semibold text-slate-800" title={detail?.id}>{detail?.id || '退款详情'}</div>
