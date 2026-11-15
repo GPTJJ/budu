@@ -19,6 +19,7 @@ import { enumerateOnlineSkus } from './online-catalog-coverage.js'
 import { createOnlineFulfillment } from './online-fulfillment.js'
 import { registerWechatShipping } from './online-console-bridge.js'
 import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls } from './online-catalog-media.js'
+import { syncOrderArchive } from './order-archive-sync.js'
 import { uploadCatalogImage } from './online-catalog-upload.js'
 import { DEFAULT_BANNERS } from './online-banner-defaults.js'
 
@@ -1556,6 +1557,13 @@ export function serializeArchiveOrder(row) {
     lineCount: items.reduce((sum, item) => sum + (Number(item.qty) || 0), 0),
   }
 }
+
+onlineCatalogRouter.post('/online-catalog/order-archive/sync', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireConsole(req.user, 'orders')
+  const result = await syncOrderArchive()
+  res.json({ ok: true, ...result })
+}))
 
 onlineCatalogRouter.get('/online-catalog/order-archive', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)

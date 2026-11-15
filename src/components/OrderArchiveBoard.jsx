@@ -12,6 +12,9 @@ import { formatCents } from '../utils/pos'
 
 const PAGE_SIZE = 20
 
+// 同一会话内 60 秒只自动同步一次：切来切去不必反复拉云端
+let lastAutoSyncAt = 0
+
 const STATE_STYLE = {
   PENDING_PAYMENT: 'bg-slate-100 text-slate-500 border-slate-200',
   PENDING_SHIPMENT: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -63,6 +66,8 @@ export default function OrderArchiveBoard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [detail, setDetail] = useState(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncedAt, setSyncedAt] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -85,6 +90,38 @@ export default function OrderArchiveBoard() {
 
   useEffect(() => { load() }, [load])
 
+  /** 打开页面先拉一次云端最新（静默，失败就用上次同步的数据） */
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (Date.now() - lastAutoSyncAt > 60000) {
+        lastAutoSyncAt = Date.now()
+        try {
+          await api('/v2/online-catalog/order-archive/sync', { method: 'POST' })
+        } catch {
+          /* 静默失败：后台 cron 每天也会兜底同步 */
+        }
+      }
+      if (!cancelled) load()
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const syncNow = async () => {
+    setSyncing(true)
+    setError('')
+    try {
+      const res = await api('/v2/online-catalog/order-archive/sync', { method: 'POST' })
+      await load()
+      setSyncedAt(res.syncedAt || new Date().toISOString())
+    } catch (err) {
+      setError(err.message || '同步失败')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const empty = !loading && rows.length === 0
 
@@ -106,7 +143,7 @@ export default function OrderArchiveBoard() {
 
       <div className="mb-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] text-slate-500">
         <Archive size={13} className="shrink-0 text-slate-400" />
-        <span>只读归档：来自小程序历史下单记录，用于查询核对，不影响结算、发货与退款。</span>
+        <span>只读归档：来自小程序历史下单记录，用于查询核对，不影响结算、发货与退款。{syncedAt ? ` 本次同步 ${new Date(syncedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
       </div>
 
       <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center">
@@ -134,7 +171,9 @@ export default function OrderArchiveBoard() {
             />
           </label>
           <button type="button" onClick={() => { setQuery(keyword.trim()); setPage(1) }} className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50 lg:h-8">搜索</button>
-          <button type="button" onClick={load} className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50 lg:h-8">刷新</button>
+          <button type="button" onClick={syncNow} disabled={syncing} className="h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50 lg:h-8">
+            {syncing ? '同步中…' : '同步最新'}
+          </button>
         </div>
       </div>
 
