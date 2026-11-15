@@ -191,6 +191,10 @@ export function resolveCcUsers(ccRule, ctx = {}) {
       for (const u of ctx.roleUsers?.[rule.role] || []) push(u.username, u.name)
     } else if (rule.type === 'submitter') {
       push(ctx.submitter?.username, ctx.submitter?.name)
+    } else if (rule.type === 'username') {
+      // 指定账号抄送（如固定抄送金晶）：名字从账号表取，取不到就用用户名
+      const known = Object.values(ctx.roleUsers || {}).flat().find((u) => u.username === rule.username)
+      push(rule.username, known?.name)
     } else if (rule.type === 'staffField') {
       // formData[field] = 'storeKey::员工名' → 按员工绑定账号匹配
       const staffKey = String(ctx.formData?.[rule.field] || '')

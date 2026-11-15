@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { resolveApprovalChain, APPROVAL_CHAIN, isApproverFor } from '../server/approvals-core.js'
+import { resolveApprovalChain, APPROVAL_CHAIN, isApproverFor, resolveCcUsers } from '../server/approvals-core.js'
 
 const cases = []
 const check = (name, fn) => { try { fn(); cases.push(['PASS', name]) } catch (e) { cases.push(['FAIL', `${name}: ${e.message}`]) } }
@@ -15,6 +15,15 @@ check('steps 规则下审批人身份识别', () => {
   assert.equal(isApproverFor({ username: 'budu', role: 'developer' }, request, template), true)
   assert.equal(isApproverFor({ username: '杨梦彤', role: 'admin' }, request, template), true)
   assert.equal(isApproverFor({ username: '白婷', role: 'staff' }, request, template), false)
+})
+
+check('抄送：提交人 + 固定金晶', () => {
+  const cc = resolveCcUsers([{ type: 'submitter' }, { type: 'username', username: '金晶' }], {
+    roleUsers: { staff: [{ username: '白婷', name: '白婷' }], finance: [{ username: '金晶', name: '金晶' }] },
+    submitter: { username: '白婷', name: '白婷' },
+  })
+  assert.deepEqual(cc.map((x) => x.username), ['白婷', '金晶'])
+  assert.deepEqual(cc.map((x) => x.name), ['白婷', '金晶'])
 })
 
 let pass = 0
