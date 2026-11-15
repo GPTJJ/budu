@@ -5,7 +5,7 @@ import { assertComboFlavors, assertComboOnShelf, comboSkus, findImportItem, norm
 import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
 import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
 import { bannerData, bannerChecksum, serializeBanner } from '../server/online-catalog.js'
-import { orderStateOf, orderStateWhere, normalizeOrderKeyword, autoCompleteCutoff, serializeArchiveOrder } from '../server/online-catalog.js'
+import { orderStateOf, orderStateWhere, normalizeOrderKeyword, autoCompleteCutoff, serializeArchiveOrder, mergeArchiveAnalytics } from '../server/online-catalog.js'
 import { normalizeMpConsole, mpConsoleModulesOf, hasMpConsoleAccess, canEnterMpConsole, canManageMpConsoleAccess, MP_CONSOLE_MODULE_KEYS, MP_CONSOLE_PRESETS } from '../shared/accountPermissions.js'
 
 const category = { name: '生巧克力', meta: { color: '#A13966', sub: '手工生巧' } }
@@ -669,4 +669,57 @@ test('serializeArchiveOrder: 未知状态原样透出，自提有中文标签，
   assert.equal(out.deliveryLabel, '门店自提')
   assert.deepEqual(out.lines, [])
   assert.equal(out.lineCount, 0)
+})
+
+// ---------- 历史订单并入交易分析（已退款不计入成交额） ----------
+
+const archiveAcc = () => ({ buckets: new Map(), products: new Map() })
+const archiveRow = (over) => ({
+  status: 'SHIPPED', paidCents: 8400n, paidAt: new Date('2026-11-10T02:00:00Z'), createdAt: new Date('2026-11-10T01:59:00Z'),
+  items: [{ productId: 'g12', productName: '12颗礼盒', qty: 1, lineAmountCent: 6900 }],
+  ...over,
+})
+
+test('mergeArchiveAnalytics: 已退款订单不计入净成交，但计入退款笔数与金额', () => {
+  const acc = archiveAcc()
+  const out = mergeArchiveAnalytics(acc, [
+    archiveRow({}),
+    archiveRow({ status: 'REFUNDED', paidCents: 6900n, paidAt: new Date('2026-11-11T02:00:00Z') }),
+  ])
+  assert.equal(out.orders, 2)
+  assert.equal(out.paidOrders, 2)     // 两笔都支付过
+  assert.equal(out.netOrders, 1)      // 只有一笔算成交
+  assert.equal(out.netCents, 8400)
+  assert.equal(out.refundedOrders, 1)
+  assert.equal(out.refundCents, 6900)
+  assert.equal(out.grossCents, 15300) // 毛额含退款单
+})
+
+test('mergeArchiveAnalytics: 未支付/已取消只计订单数，不进成交与热销', () => {
+  const acc = archiveAcc()
+  const out = mergeArchiveAnalytics(acc, [
+    archiveRow({ status: 'PENDING_PAYMENT', paidCents: 0n, paidAt: null }),
+    archiveRow({ status: 'CANCELLED', paidCents: 0n, paidAt: null }),
+  ])
+  assert.equal(out.orders, 2)
+  assert.equal(out.paidOrders, 0)
+  assert.equal(out.netCents, 0)
+  assert.equal(out.cancelled, 1)
+  assert.equal(acc.products.size, 0)
+})
+
+test('mergeArchiveAnalytics: 按支付日入桶，热销只累计有效成交', () => {
+  const acc = archiveAcc()
+  mergeArchiveAnalytics(acc, [
+    archiveRow({ paidAt: new Date('2026-11-10T02:00:00Z') }),
+    archiveRow({ paidAt: new Date('2026-11-11T02:00:00Z'), items: [{ productId: 'g12', productName: '12颗礼盒', qty: 2, lineAmountCent: 13800 }] }),
+    archiveRow({ status: 'REFUNDED', paidAt: new Date('2026-11-11T03:00:00Z') }),
+  ])
+  assert.equal(acc.buckets.get('2026-11-10').paidCents, 8400)
+  assert.equal(acc.buckets.get('2026-11-11').paidCents, 8400) // 退款单不落钱
+  assert.equal(acc.buckets.get('2026-11-11').orders, 2)
+  const g12 = acc.products.get('g12')
+  assert.equal(g12.quantity, 3)
+  assert.equal(g12.amountCents, 20700)
+  assert.equal(g12.orders, 2)
 })

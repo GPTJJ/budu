@@ -60,11 +60,17 @@ export default function AnalyticsBoard({ fixedDays = 0 }) {
       </div>
 
       <div className="grid grid-cols-2 gap-2.5 lg:gap-3 xl:grid-cols-4">
-        <Kpi label="净成交额" value={formatCents(totals.paidCents)} hint={`${totals.paidOrders} 笔已支付（已扣整单退款）`} />
+        <Kpi label="净成交额" value={formatCents(totals.paidCents)} hint={`${totals.paidOrders} 笔已支付 · 已退款不计入`} />
         <Kpi label="订单数" value={totals.orders} hint={`取消 ${totals.cancelled} 笔`} />
         <Kpi label="客单价" value={formatCents(totals.avgOrderCents)} hint="按已支付订单的实付金额" />
         <Kpi label="退款金额" value={formatCents(totals.refundCents)} hint={`${totals.refundedOrders} 笔退款 · ${totals.cancelled} 笔取消`} />
       </div>
+
+      {data.archive && data.archive.orders > 0 ? (
+        <p className="mt-2 text-[11px] text-slate-400">
+          含小程序历史订单 {data.archive.orders} 笔（有效成交 {data.archive.paidOrders} 笔 · {formatCents(data.archive.paidCents)}），已退款订单不计入成交额
+        </p>
+      ) : null}
 
       <div className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
         <div className="rounded-2xl border border-slate-200 bg-white">

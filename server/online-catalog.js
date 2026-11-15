@@ -810,6 +810,52 @@ onlineCatalogRouter.get('/online-catalog/refunds/:id', wrap(async (req, res) => 
 
 // ---------------- 数据（P2，只读聚合） ----------------
 
+/**
+ * 把小程序历史订单并入分析累加器（buckets / products 原地更新）。
+ * 口径（用户 2026-11-15 确认）：已退款订单**不计入成交额**，只计入退款笔数与金额；
+ * 未支付、已取消只计入订单数；成交按支付日归档。
+ */
+export function mergeArchiveAnalytics(acc, rows) {
+  const out = { orders: 0, paidOrders: 0, netOrders: 0, netCents: 0, grossCents: 0, refundedOrders: 0, refundCents: 0, cancelled: 0 }
+  for (const row of rows || []) {
+    out.orders += 1
+    const amount = Number(row.paidCents || 0)
+    const refunded = row.status === 'REFUNDED'
+    const paid = Boolean(row.paidAt) && amount > 0
+    if (row.status === 'CANCELLED') out.cancelled += 1
+
+    const stamp = row.paidAt || row.createdAt
+    const day = new Date(stamp).toISOString().slice(0, 10)
+    if (!acc.buckets.has(day)) acc.buckets.set(day, { date: day, orders: 0, paidCents: 0 })
+    acc.buckets.get(day).orders += 1
+
+    if (!paid) {
+      if (refunded) out.refundedOrders += 1
+      continue
+    }
+    out.paidOrders += 1
+    out.grossCents += amount
+    if (refunded) {
+      out.refundedOrders += 1
+      out.refundCents += amount
+      continue
+    }
+    out.netOrders += 1
+    out.netCents += amount
+    acc.buckets.get(day).paidCents += amount
+
+    for (const line of Array.isArray(row.items) ? row.items : []) {
+      const key = String(line.productId || line.name || 'unknown')
+      if (!acc.products.has(key)) acc.products.set(key, { id: key, name: String(line.productName || line.name || key), quantity: 0, amountCents: 0, orders: 0 })
+      const target = acc.products.get(key)
+      target.quantity += Number(line.qty) || 0
+      target.amountCents += Number(line.lineAmountCent || 0)
+      target.orders += 1
+    }
+  }
+  return out
+}
+
 onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
   if (!dbReady()) throw httpError('数据库未配置', 503)
   requireConsole(req.user, 'data')
@@ -862,6 +908,19 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
     }
   }
 
+  // 历史订单（CloudBase 归档）：并入同一条曲线（口径见 mergeArchiveAnalytics）
+  const archiveRows = await prisma.onlineOrderArchive.findMany({
+    where: { createdAt: { gte: since } },
+    take: 2000,
+  })
+  const archive = mergeArchiveAnalytics({ buckets, products }, archiveRows)
+  paidOrders += archive.paidOrders
+  grossCents += archive.grossCents
+  paidCents += archive.netCents
+  refundedOrders += archive.refundedOrders
+  refundCents += archive.refundCents
+  cancelled += archive.cancelled
+
   const series = [...buckets.values()].sort((a, b) => a.date.localeCompare(b.date))
   const top = [...products.values()].sort((a, b) => b.amountCents - a.amountCents).slice(0, productLimit)
 
@@ -870,7 +929,7 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
     days,
     generatedAt: new Date().toISOString(),
     totals: {
-      orders: rows.length,
+      orders: rows.length + archive.orders,
       paidOrders,
       cancelled,
       paidCents,
@@ -882,6 +941,7 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
     },
     series,
     top,
+    archive: { orders: archive.orders, paidOrders: archive.netOrders, paidCents: archive.netCents },
     productCount: products.size,
   })
 }))
