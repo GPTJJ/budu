@@ -12,6 +12,7 @@ import {
   ChevronLeft,
 } from 'lucide-react'
 import { api } from '../utils/api'
+import { MODULE_KEYS, hasModuleAccess, isSuperUser } from '../../shared/accountPermissions'
 import { formatCents } from '../utils/pos'
 import OnlineCatalogPage from './OnlineCatalogPage'
 import OnlineOrderBoard from './OnlineOrderBoard'
@@ -47,7 +48,6 @@ const MODULES = [
       { key: 'products', label: '商品列表' },
       { key: 'products-category', label: '分类管理' },
       { key: 'products-combo', label: '组合商品' },
-      { key: 'products-mapping', label: '库存与映射', soon: true },
     ],
   },
   {
@@ -82,7 +82,6 @@ const MODULES = [
     views: [
       { key: 'shipments', label: '待发货', state: 'TO_SHIP' },
       { key: 'shipments-done', label: '已发货', state: 'SHIPPED' },
-      { key: 'shipments-issue', label: '物流异常', state: 'ISSUE' },
     ],
   },
   {
@@ -92,18 +91,6 @@ const MODULES = [
     desc: '首页轮播：改图、改文案、调顺序，发布后覆盖小程序首屏',
     views: [
       { key: 'marketing-banner', label: '首页轮播' },
-      { key: 'marketing-campaign', label: '优惠活动' },
-    ],
-  },
-  {
-    key: 'shop',
-    label: '店铺',
-    icon: PanelsTopLeft,
-    desc: '小程序页面结构与内容',
-    views: [
-      { key: 'shop-home', label: '首页装修' },
-      { key: 'shop-category', label: '分类页' },
-      { key: 'shop-profile', label: '个人中心' },
     ],
   },
   {
@@ -122,38 +109,10 @@ const MODULES = [
     icon: Settings,
     desc: '店铺信息与发布记录',
     views: [
-      { key: 'settings-shop', label: '店铺信息' },
       { key: 'settings-release', label: '发布记录' },
     ],
   },
 ]
-
-const SOON_COPY = {
-  'shipments:shipments-issue': {
-    title: '物流异常',
-    note: '需要接入快递轨迹查询接口后，才能按「超时未更新 / 派送异常」聚合订单。当前可在订单详情里查看物流公司与运单号。',
-  },
-  'marketing:marketing-campaign': {
-    title: '优惠活动',
-    note: '优惠券、满减与限时活动需要小程序客户端同步支持（下单与结算链路都要改造），后台单方面配置无法生效。规划中。',
-  },
-  'shop:shop-home': {
-    title: '首页装修',
-    note: '首页除轮播外的商品区、活动位由客户端固定结构渲染；做可视化装修需要先升级小程序的渲染协议并发布新版本。轮播已可在「营销 → 首页轮播」中管理。',
-  },
-  'shop:shop-category': {
-    title: '分类页',
-    note: '分类页由小程序端固定实现，目前没有可配置项；分类本身的名称与排序在「商品 → 分类管理」中维护。',
-  },
-  'shop:shop-profile': {
-    title: '个人中心',
-    note: '个人中心的入口与文案由客户端固定，暂无可配置项。',
-  },
-  'settings:settings-shop': {
-    title: '店铺信息',
-    note: '店铺名称、地址、营业时间等由 POS 设置统一维护，避免两处编辑不一致；这里规划为只读展示。',
-  },
-}
 
 function PageHead({ title, desc, actions }) {
   return (
@@ -290,8 +249,8 @@ function Overview({ onGo }) {
   )
 }
 
-function ComingSoon({ moduleKey, view }) {
-  const copy = SOON_COPY[`${moduleKey}:${view.key}`] || { title: view.label, note: '该模块在后续阶段建设。' }
+function ComingSoon({ view }) {
+  const copy = { title: view.label, note: '该页面尚未实现，当前导航不应出现此入口。' }
   return (
     <div className="rounded-2xl border border-slate-200 bg-white px-6 py-14 text-center">
       <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400">
@@ -305,6 +264,24 @@ function ComingSoon({ moduleKey, view }) {
 }
 
 export default function MiniProgramPage({ initialModule = 'overview' }) {
+  // 入口守卫：直达链接不经过登录/权限判断，这里补一次校验（接口侧仍会 403）
+  const [access, setAccess] = useState({ state: 'checking' })
+  useEffect(() => {
+    let cancelled = false
+    api('/auth/me')
+      .then(({ user }) => {
+        if (cancelled) return
+        const allowed = Boolean(isSuperUser(user)
+          || (user?.role === 'manager' && user?.status !== 'disabled' && hasModuleAccess(user, MODULE_KEYS.PRODUCT_CENTER)))
+        setAccess({ state: allowed ? 'ok' : 'denied' })
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setAccess({ state: error?.status === 401 ? 'login' : 'denied' })
+      })
+    return () => { cancelled = true }
+  }, [])
+
   const [moduleKey, setModuleKey] = useState(
     MODULES.some((m) => m.key === initialModule) ? initialModule : 'overview',
   )
@@ -334,7 +311,29 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
     if (viewKey === 'data-product') return <ProductPerformanceBoard />
     if (viewKey === 'marketing-banner') return <BannerBoard key={viewKey} />
     if (viewKey === 'settings-release') return <PublishRecordBoard onGo={go} />
-    return <ComingSoon moduleKey={moduleKey} view={view} />
+    return <ComingSoon view={view} />
+  }
+
+  if (access.state !== 'ok') {
+    const copy = access.state === 'login'
+      ? { title: '请先登录', note: '「小程序管理台」需要登录 OS 后使用。', action: '去登录' }
+      : access.state === 'denied'
+        ? { title: '无权限访问', note: '该管理台仅对超级管理员，或拥有「商品中心」权限的店长开放。', action: '返回首页' }
+        : { title: '正在校验访问权限…', note: '如果长时间没有反应，请返回首页重新登录。', action: '返回首页' }
+    return (
+      <div className="grid min-h-[100dvh] place-items-center bg-[#F6F4F2] px-6">
+        <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-6 py-8 text-center">
+          <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400">
+            <PanelsTopLeft size={20} />
+          </div>
+          <div className="text-sm font-semibold text-slate-800">{copy.title}</div>
+          <p className="mt-2 text-xs leading-relaxed text-slate-500">{copy.note}</p>
+          {access.state !== 'checking' ? (
+            <a href="/" className="mt-5 inline-flex h-9 items-center rounded-xl bg-budu-500 px-4 text-sm font-semibold text-white">{copy.action}</a>
+          ) : null}
+        </div>
+      </div>
+    )
   }
 
   return (
