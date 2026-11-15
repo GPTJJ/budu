@@ -200,3 +200,25 @@ test.describe('导出排班图片', () => {
     expect(download.suggestedFilename()).toMatch(/排班表-.*-北京通盈中心店\.png$/)
   })
 })
+
+test.describe('门店启停联动排班', () => {
+  test('已停用门店不出现在门店标签与「全部门店」视图中', async ({ page }) => {
+    // 营业中的门店照常出现
+    await expect(page.getByRole('button', { name: '北京通盈中心店' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '北京官舍店' })).toBeVisible()
+    // 已停用门店（active=false）在标签栏和排班表里都不出现
+    await expect(page.getByRole('button', { name: '北京朝外店' })).toHaveCount(0)
+    await expect(page.getByText('北京朝外店')).toHaveCount(0)
+  })
+
+  test('已停用门店当周仍留有历史排班时只读展示，不提供添加/编辑', async ({ page }) => {
+    await page.goto('/tests/schedule-harness.html?mode=developer&closed=history')
+    await expect(page.locator('body')).toContainText('门店排班')
+    const closedCard = page.locator('.card').filter({ hasText: '已停用 · 仅查看历史' })
+    await expect(closedCard).toHaveCount(1)
+    await expect(closedCard).toContainText('北京朝外店')
+    await expect(closedCard.getByText('已停用 · 仅查看历史')).toBeVisible()
+    await expect(closedCard.getByRole('button', { name: '添加排班' })).toHaveCount(0)
+    await expect(closedCard.getByRole('button', { name: '删除' })).toHaveCount(0)
+  })
+})

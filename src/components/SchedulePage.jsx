@@ -32,9 +32,10 @@ function weekFromRows(rows) {
 
 export default function SchedulePage({ onBack, canEdit = true, user, registerNavigationGuard }) {
   // allStores 可能包含 BASE_STORES 与云端门店的重复 key，按 key 去重
-  const stores = [...new Map(allStores().map((s) => [s.key, s])).values()]
+  const directory = [...new Map(allStores().map((s) => [s.key, s])).values()]
   const writableStores = useOperatingStores()
   const canWriteStore = (key) => writableStores.some((store) => store.key === key)
+  const isClosedStore = (key) => directory.find((store) => store.key === key)?.active === false
   const [weekStart, setWeekStart] = useState(() => getWeekStart())
   // 默认「全部门店」：一次展示所有门店排班详情
   const [storeKey, setStoreKey] = useState('all')
@@ -61,7 +62,15 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
 
   const days = getWeekDays(weekStart)
   const today = todayStr()
-  const storeInfo = stores.find((s) => s.key === storeKey)
+  const weekStoreShifts = schedules[weekStart] || {}
+  // 门店启停联动排班：PG 标记 active=false 的门店不再出现在排班页与导出图片中；
+  // 仅当该周仍有历史班次时只读保留，避免已关店的历史排班凭空消失。
+  const stores = directory.filter((store) => {
+    if (!isClosedStore(store.key)) return true
+    const weekDays = weekStoreShifts[store.key]
+    return Boolean(weekDays) && Object.values(weekDays).some((shifts) => Array.isArray(shifts) && shifts.length > 0)
+  })
+  const storeInfo = directory.find((s) => s.key === storeKey)
   const staffOptions = currentEmployeeDirectory('all').sort((a, b) =>
     String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN'),
   )
@@ -85,6 +94,15 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
   useEffect(() => {
     loadWeek(weekStart)
   }, [weekStart, loadWeek])
+
+  // 门店停用或切换周后，单店视图若已不可见则回到「全部门店」，避免停留在空白门店。
+  useEffect(() => {
+    if (storeKey === 'all') return
+    const visible = stores.some((store) => store.key === storeKey)
+    if (!visible) setStoreKey('all')
+    // stores 每次渲染都是新数组，不能作为依赖；由周次与排班数据驱动即可。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeKey, weekStart, schedules])
 
   useEffect(() => {
     const onBeforeUnload = (event) => {
@@ -308,11 +326,16 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
             {t('周排班表')}
           </h3>
           <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">
-            {weekRangeLabel(weekStart)} · {stores.find((x) => x.key === store)?.name || store}
+            {weekRangeLabel(weekStart)} · {directory.find((x) => x.key === store)?.name || store}
           </span>
           <span className="rounded-lg bg-budu-50 px-2 py-0.5 text-xs font-semibold text-budu-600">
             {t('共 {n} 个班次', { n: totalShifts })}
           </span>
+          {isClosedStore(store) && (
+            <span className="rounded-lg bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-400">
+              {t('已停用 · 仅查看历史')}
+            </span>
+          )}
           {!canEdit && (
             <span className="ml-auto rounded-lg bg-slate-50 px-2 py-0.5 text-[11px] text-slate-400">
               {t('只读模式')}
@@ -449,10 +472,10 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
           )}
           <span className="rounded-lg bg-budu-50 px-2.5 py-1 text-xs font-semibold text-budu-600">
             {t('共 {n} 个班次', {
-              n: days.reduce((sum, d) => {
-                const week = schedules[weekStart] || {}
-                return sum + Object.values(week).reduce((s2, storeDays) => s2 + ((storeDays && storeDays[d.date]) || []).length, 0)
-              }, 0),
+              n: stores.reduce(
+                (sum, store) => sum + Object.values(weekStoreShifts[store.key] || {}).reduce((acc, shifts) => acc + (shifts || []).length, 0),
+                0,
+              ),
             })}
           </span>
         </div>
@@ -635,7 +658,7 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
                   {editingIndex === null ? t('添加员工排班') : t('编辑员工排班')}
                 </h3>
                 <p className="mt-0.5 text-xs text-slate-400">
-                  {weekRangeLabel(weekStart)} · {stores.find((x) => x.key === editingStore)?.name || ''} · {editingDate}
+                  {weekRangeLabel(weekStart)} · {directory.find((x) => x.key === editingStore)?.name || ''} · {editingDate}
                 </p>
               </div>
               <button
@@ -658,7 +681,7 @@ export default function SchedulePage({ onBack, canEdit = true, user, registerNav
                   <option value="">{t('请选择员工')}</option>
                   {staffOptions.map((employee) => (
                     <option key={employee.id} value={employee.id}>
-                      {employee.name} · {employee.employeeNo || employee.id} · {stores.find((store) => store.key === employee.storeKey)?.name || employee.storeKey}
+                      {employee.name} · {employee.employeeNo || employee.id} · {directory.find((store) => store.key === employee.storeKey)?.name || employee.storeKey}
                     </option>
                   ))}
                 </select>

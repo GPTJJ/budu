@@ -12,6 +12,8 @@
     const PARAMS = new URLSearchParams(location.search)
     const MODE = PARAMS.get('mode') || 'developer'
     const FAIL_SAVE = PARAMS.get('failSave') === '1'
+    // closed=history：停用门店在当周仍有历史排班（用于验证只读保留）
+    const CLOSED_HISTORY = PARAMS.get('closed') === 'history'
 
     // 排班数据：本周（与 getWeekStart 同周）两个门店各两天班次
     const weekStart = (() => {
@@ -36,6 +38,9 @@
         guanshe: {
           [dateOffset(2)]: [{ employeeId: 'emp-gong', staff: '龚艺锦', time: '早班' }],
         },
+        ...(CLOSED_HISTORY
+          ? { chaowai: { [dateOffset(0)]: [{ employeeId: 'emp-sui', staff: '隋晓', time: '通班' }] } }
+          : {}),
       },
     }
     let serverSchedules = JSON.parse(sessionStorage.getItem('schedule-test-server') || 'null') || structuredClone(schedules)
@@ -53,8 +58,10 @@
       ],
       removedStaff: [],
       stores: [
-        { key: 'tongying', name: '北京通盈中心店' },
-        { key: 'guanshe', name: '北京官舍店' },
+        { key: 'tongying', name: '北京通盈中心店', active: true },
+        { key: 'guanshe', name: '北京官舍店', active: true },
+        // 已停用门店：不应出现在门店标签与「全部门店」视图/导出图片中
+        { key: 'chaowai', name: '北京朝外店', active: false },
       ],
       schedules,
       products: [],
