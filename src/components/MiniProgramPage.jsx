@@ -23,6 +23,7 @@ import ComboBoard from './ComboBoard'
 import ProductPerformanceBoard from './ProductPerformanceBoard'
 import PublishRecordBoard from './PublishRecordBoard'
 import AccessBoard from './AccessBoard'
+import OrderArchiveBoard from './OrderArchiveBoard'
 
 /**
  * 小程序管理台外壳（BUDU-MP-CONSOLE-001 / P0）
@@ -61,6 +62,7 @@ const MODULES = [
       { key: 'orders-shipped', label: '已发货', state: 'SHIPPED' },
       { key: 'orders-refunded', label: '已退款', state: 'REFUNDED' },
       { key: 'orders-cancelled', label: '已取消', state: 'CANCELLED' },
+      { key: 'orders-archive', label: '历史订单' },
     ],
   },
   {
@@ -338,6 +340,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
     if (viewKey === 'products') return <OnlineCatalogPage embedded />
     if (viewKey === 'products-category') return <CategoryBoard />
     if (viewKey === 'products-combo') return <ComboBoard onGo={go} />
+    if (viewKey === 'orders-archive') return <OrderArchiveBoard key={viewKey} />
     if ((module.key === 'orders' || module.key === 'shipments') && view.state !== 'ISSUE') {
       return <OnlineOrderBoard key={viewKey} initialState={view.state || ''} title={view.label} showFilters={moduleKey === 'orders'} />
     }

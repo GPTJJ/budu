@@ -1444,6 +1444,108 @@ onlineCatalogRouter.post('/online-catalog/publish-batch', wrap(async (req, res) 
   res.json({ ok: results.every((row) => row.ok), results })
 }))
 
+// ---------------- 历史订单归档（只读；来源 CloudBase `orders`） ----------------
+//
+// 小程序 1.0.x 下单写的是 CloudBase `orders`；OS 的 online_settlements 只覆盖
+// 新结账链路，两者不是一套系统。历史订单归档到独立表，仅用于检索核对，
+// 不参与发货、退款与财务结算（避免影响结算口径）。
+
+const ARCHIVE_STATE_LABEL = {
+  PENDING_PAYMENT: '待付款',
+  PENDING_SHIPMENT: '待发货',
+  PAID: '待发货',
+  SHIPPED: '已发货',
+  PENDING_REVIEW: '待评价',
+  COMPLETED: '已完成',
+  REFUNDED: '已退款',
+  CANCELLED: '已取消',
+}
+
+export function serializeArchiveOrder(row) {
+  const items = Array.isArray(row.items) ? row.items : []
+  return {
+    id: row.id,
+    payNo: row.payNo,
+    orderNo: row.orderNo,
+    state: row.status,
+    stateLabel: ARCHIVE_STATE_LABEL[row.status] || row.status,
+    createdAt: row.createdAt,
+    paidAt: row.paidAt,
+    shippedAt: row.shippedAt,
+    receivedAt: row.receivedAt,
+    cancelledAt: row.cancelledAt,
+    goodsCents: String(row.goodsCents),
+    shippingCents: String(row.shippingCents),
+    totalCents: String(row.totalCents),
+    paidCents: String(row.paidCents),
+    refundCents: String(row.refundCents),
+    deliveryType: row.deliveryType,
+    deliveryLabel: row.deliveryType === 'pickup' ? '门店自提' : row.deliveryType === 'delivery' ? '快递配送' : '—',
+    storeName: row.storeName,
+    carrier: row.carrier,
+    trackingNo: row.trackingNo,
+    transactionId: row.transactionId,
+    customer: { name: row.recipientName, phone: row.recipientPhone, address: row.recipientAddress },
+    lines: items.map((item) => ({
+      id: item.productId || '',
+      name: item.productName || item.name || '',
+      spec: item.spec || '',
+      quantity: Number(item.qty) || 0,
+      amountCents: String(item.lineAmountCent || 0),
+    })),
+    lineCount: items.reduce((sum, item) => sum + (Number(item.qty) || 0), 0),
+  }
+}
+
+onlineCatalogRouter.get('/online-catalog/order-archive', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireConsole(req.user, 'orders')
+  const keyword = normalizeOrderKeyword(text(req.query.q, 50, '搜索词'))
+  const state = text(req.query.state, 20, '状态')
+  const page = integer(req.query.page, '页码', { min: 1, max: 1000, fallback: 1 })
+
+  const where = {}
+  if (state) where.status = state
+  if (keyword) {
+    where.OR = [
+      { payNo: { contains: keyword } },
+      { orderNo: { contains: keyword } },
+      { recipientName: { contains: keyword } },
+      { recipientPhone: { contains: keyword } },
+    ]
+  }
+
+  const [total, rows, grouped, paid] = await Promise.all([
+    prisma.onlineOrderArchive.count({ where }),
+    prisma.onlineOrderArchive.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * ORDER_PAGE_SIZE,
+      take: ORDER_PAGE_SIZE,
+    }),
+    prisma.onlineOrderArchive.groupBy({ by: ['status'], _count: { _all: true } }),
+    prisma.onlineOrderArchive.aggregate({
+      where: { status: { in: ['PENDING_SHIPMENT', 'PAID', 'SHIPPED', 'PENDING_REVIEW', 'COMPLETED'] } },
+      _count: { _all: true },
+      _sum: { paidCents: true },
+    }),
+  ])
+
+  res.json({
+    ok: true,
+    total,
+    page,
+    pageSize: ORDER_PAGE_SIZE,
+    stats: {
+      all: grouped.reduce((sum, group) => sum + group._count._all, 0),
+      byState: Object.fromEntries(grouped.map((group) => [group.status, group._count._all])),
+      paidOrders: paid._count._all,
+      paidCents: String(paid._sum.paidCents || 0),
+    },
+    orders: rows.map(serializeArchiveOrder),
+  })
+}))
+
 // ---------------- 小程序管理台：模块级授权（开发者分配） ----------------
 
 /** 当前账号在管理台可用的模块 + 是否具备分配权 */

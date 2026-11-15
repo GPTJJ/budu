@@ -3028,3 +3028,39 @@ model StoreServiceVisit {
   @@index([event, createdAt])
   @@map("store_service_visits")
 }
+
+/// 小程序历史订单（只读归档）。
+/// 数据源是 CloudBase `orders` 集合（1.0.x 客户端下单落库）；OS 的
+/// `online_settlements` 只覆盖新结账链路，两者是不同系统，不能混表。
+/// 本表仅供管理台检索/核对，不参与发货、退款与财务结算。
+model OnlineOrderArchive {
+  id               String    @id
+  payNo            String    @unique @map("pay_no")
+  orderNo          String    @default("") @map("order_no")
+  status           String
+  deliveryType     String    @default("") @map("delivery_type")
+  storeName        String    @default("") @map("store_name")
+  paidCents        BigInt    @default(0) @map("paid_cents")
+  goodsCents       BigInt    @default(0) @map("goods_cents")
+  shippingCents    BigInt    @default(0) @map("shipping_cents")
+  totalCents       BigInt    @default(0) @map("total_cents")
+  refundCents      BigInt    @default(0) @map("refund_cents")
+  items            Json      @default("[]")
+  recipientName    String    @default("") @map("recipient_name")
+  recipientPhone   String    @default("") @map("recipient_phone")
+  recipientAddress String    @default("") @map("recipient_address")
+  carrier          String    @default("")
+  trackingNo       String    @default("") @map("tracking_no")
+  transactionId    String    @default("") @map("transaction_id")
+  paidAt           DateTime? @map("paid_at")
+  shippedAt        DateTime? @map("shipped_at")
+  receivedAt       DateTime? @map("received_at")
+  cancelledAt      DateTime? @map("cancelled_at")
+  createdAt        DateTime  @map("created_at")
+  raw              Json      @default("{}")
+  importedAt       DateTime  @default(now()) @map("imported_at")
+
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@map("online_order_archive")
+}

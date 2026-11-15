@@ -5,7 +5,7 @@ import { assertComboFlavors, assertComboOnShelf, comboSkus, findImportItem, norm
 import { withDisplayMedia, displayValue, classifyMediaValue, packageImageMirror, __resetMediaResolverForTest } from '../server/online-catalog-media.js'
 import { parseImageDataUrl, buildCloudPath, uploadCatalogImage } from '../server/online-catalog-upload.js'
 import { bannerData, bannerChecksum, serializeBanner } from '../server/online-catalog.js'
-import { orderStateOf, orderStateWhere, normalizeOrderKeyword, autoCompleteCutoff } from '../server/online-catalog.js'
+import { orderStateOf, orderStateWhere, normalizeOrderKeyword, autoCompleteCutoff, serializeArchiveOrder } from '../server/online-catalog.js'
 import { normalizeMpConsole, mpConsoleModulesOf, hasMpConsoleAccess, canEnterMpConsole, canManageMpConsoleAccess, MP_CONSOLE_MODULE_KEYS, MP_CONSOLE_PRESETS } from '../shared/accountPermissions.js'
 
 const category = { name: '生巧克力', meta: { color: '#A13966', sub: '手工生巧' } }
@@ -630,4 +630,43 @@ test('console presets only use known modules and cover the expected roles', () =
   const support = MP_CONSOLE_PRESETS.find((item) => item.key === 'support')
   assert.deepEqual(support.modules, ['overview', 'orders', 'after-sales'])
   assert.equal(MP_CONSOLE_PRESETS.find((item) => item.key === 'all').modules.length, MP_CONSOLE_MODULE_KEYS.length)
+})
+
+// ---------- 历史订单归档（只读） ----------
+
+test('serializeArchiveOrder: 金额转字符串、状态有中文标签、行数按数量求和', () => {
+  const row = {
+    id: 'order-1', payNo: 'B123', orderNo: '1114-1200-72', status: 'SHIPPED',
+    deliveryType: 'delivery', storeName: '', goodsCents: 6900n, shippingCents: 1500n,
+    totalCents: 8400n, paidCents: 8400n, refundCents: 0n,
+    carrier: 'SF', trackingNo: 'SF123', transactionId: 'T1',
+    createdAt: new Date('2026-11-14T04:00:23Z'), paidAt: new Date('2026-11-14T04:00:53Z'),
+    shippedAt: new Date('2026-11-14T04:03:25Z'), receivedAt: null, cancelledAt: null,
+    recipientName: '杨', recipientPhone: '17603628492', recipientAddress: '黑龙江…',
+    items: [
+      { productId: 'g12', productName: '12颗礼盒', spec: '12颗/盒', qty: 1, lineAmountCent: 6900 },
+      { productId: 'c1', productName: '92% 生巧克力', spec: '100g/盒', qty: 2, lineAmountCent: 27600 },
+    ],
+  }
+  const out = serializeArchiveOrder(row)
+  assert.equal(out.stateLabel, '已发货')
+  assert.equal(out.paidCents, '8400')
+  assert.equal(out.goodsCents, '6900')
+  assert.equal(out.deliveryLabel, '快递配送')
+  assert.equal(out.lineCount, 3)
+  assert.equal(out.lines.length, 2)
+  assert.equal(out.lines[1].name, '92% 生巧克力')
+  assert.equal(out.customer.phone, '17603628492')
+})
+
+test('serializeArchiveOrder: 未知状态原样透出，自提有中文标签，缺 items 不报错', () => {
+  const out = serializeArchiveOrder({
+    id: 'o2', payNo: 'B9', orderNo: '', status: 'SOMETHING_NEW', deliveryType: 'pickup',
+    goodsCents: 0n, shippingCents: 0n, totalCents: 0n, paidCents: 0n, refundCents: 0n,
+    items: null, createdAt: new Date(), recipientName: '', recipientPhone: '', recipientAddress: '',
+  })
+  assert.equal(out.stateLabel, 'SOMETHING_NEW')
+  assert.equal(out.deliveryLabel, '门店自提')
+  assert.deepEqual(out.lines, [])
+  assert.equal(out.lineCount, 0)
 })
