@@ -18,6 +18,7 @@ import OnlineOrderBoard from './OnlineOrderBoard'
 import AfterSalesBoard from './AfterSalesBoard'
 import AnalyticsBoard from './AnalyticsBoard'
 import BannerBoard from './BannerBoard'
+import CouponBoard from './CouponBoard'
 import CategoryBoard from './CategoryBoard'
 import ComboBoard from './ComboBoard'
 import ProductPerformanceBoard from './ProductPerformanceBoard'
@@ -90,9 +91,10 @@ const MODULES = [
     key: 'marketing',
     label: '营销',
     icon: Megaphone,
-    desc: '首页轮播：改图、改文案、调顺序，发布后覆盖小程序首屏',
+    desc: '首页轮播与优惠券：改图改文案、配券面额与时效',
     views: [
       { key: 'marketing-banner', label: '首页轮播' },
+      { key: 'marketing-coupon', label: '优惠券' },
     ],
   },
   {
@@ -348,6 +350,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
     if (viewKey === 'data-trade') return <AnalyticsBoard key={viewKey} />
     if (viewKey === 'data-product') return <ProductPerformanceBoard />
     if (viewKey === 'marketing-banner') return <BannerBoard key={viewKey} />
+    if (viewKey === 'marketing-coupon') return <CouponBoard key={viewKey} />
     if (viewKey === 'settings-release') return <PublishRecordBoard onGo={go} />
     if (viewKey === 'settings-access' && access.canManageAccess) return <AccessBoard />
     if (access.modules[module.key] !== true) {

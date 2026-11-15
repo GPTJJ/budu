@@ -235,7 +235,87 @@ export function createOnlineCatalogPublisher({ app, envId = '', logger = console
     return { categories: names }
   }
 
-  return { publishProduct, publishCategories, publishBanners, readProduct, readAllProducts, readBannerConfig, uploadDataUrl, buildProductDoc, envId }
+  // ---- 券模板（coupon_templates）----
+  // 券的权威在 CloudBase：小程序 `coupon` 云函数直接读这个集合，所以管理台保存即生效，
+  // 不需要像商品那样「发布」——发布是为了把 OS 的档案投影成小程序文档，这里没有第二份档案。
+  const COUPON_COLLECTION = 'coupon_templates'
+
+  function pickCouponDoc(result) {
+    const data = result?.data
+    const doc = Array.isArray(data) ? data[0] : data
+    return doc && typeof doc === 'object' && !Array.isArray(doc) ? doc : null
+  }
+
+  async function listCouponTemplates() {
+    try {
+      const result = await db.collection(COUPON_COLLECTION).limit(200).get()
+      return (result?.data || []).filter((doc) => doc && typeof doc === 'object' && !Array.isArray(doc))
+    } catch {
+      // 集合还不存在时按空列表处理（首次使用）
+      return []
+    }
+  }
+
+  async function readCouponTemplate(id) {
+    try {
+      return pickCouponDoc(await db.collection(COUPON_COLLECTION).doc(String(id)).get())
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 写入券模板。
+   * - 已存在：update（不动 issuedQty —— 那是运行态计数，由云函数的条件自增维护）
+   * - 不存在：add，_id 由调用方给定（业务可读 id）
+   * 回读校验失败按 502 抛出，避免管理台显示成功但库里没变。
+   */
+  async function writeCouponTemplate(doc) {
+    const id = String(doc?._id || '')
+    if (!id) throw httpError('券模板缺少 id', 409)
+    const payload = { ...doc }
+    delete payload._id
+    delete payload.issuedQty
+
+    const existing = await readCouponTemplate(id)
+    if (existing) {
+      await db.collection(COUPON_COLLECTION).doc(id).update(payload)
+    } else {
+      await db.collection(COUPON_COLLECTION).add({ _id: id, ...payload, issuedQty: 0 })
+    }
+
+    let readBack = null
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 * attempt))
+      readBack = await readCouponTemplate(id)
+      if (!readBack) continue
+      const same = readBack.name === payload.name
+        && Number(readBack.faceCent) === Number(payload.faceCent)
+        && Number(readBack.thresholdCent) === Number(payload.thresholdCent)
+        && String(readBack.status) === String(payload.status)
+      if (same) {
+        logger.info?.('[online-catalog] coupon template saved', { id, envId, action: existing ? 'updated' : 'created' })
+        return { action: existing ? 'updated' : 'created', doc: readBack }
+      }
+    }
+    if (!readBack) throw httpError('保存后回读不到券模板', 502)
+    throw httpError('券模板回读校验失败，请重试', 502)
+  }
+
+  return {
+    publishProduct,
+    publishCategories,
+    publishBanners,
+    readProduct,
+    readAllProducts,
+    readBannerConfig,
+    listCouponTemplates,
+    readCouponTemplate,
+    writeCouponTemplate,
+    uploadDataUrl,
+    buildProductDoc,
+    envId
+  }
 }
 
 export async function getOnlineCatalogPublisher() {

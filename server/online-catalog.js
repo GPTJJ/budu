@@ -22,6 +22,7 @@ import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls } from './online
 import { syncOrderArchive } from './order-archive-sync.js'
 import { uploadCatalogImage } from './online-catalog-upload.js'
 import { DEFAULT_BANNERS } from './online-banner-defaults.js'
+import { normalizeCouponTemplate, newCouponTemplateId, serializeCouponTemplate } from './mini-program-coupons.js'
 
 export const ONLINE_CATALOG_NAMESPACE = 'cloudbase-miniprogram'
 export const ONLINE_CATALOG_STATUSES = ['DRAFT', 'ON', 'OFF']
@@ -1155,6 +1156,35 @@ onlineCatalogRouter.post('/online-catalog/banners/publish', wrap(async (req, res
     }).catch(() => {})
     throw error
   }
+}))
+
+// ---- 小程序券模板 ----
+// 券的权威在 CloudBase `coupon_templates`：小程序 `coupon` 云函数直接读它，
+// 因此这里「保存即生效」，没有发布步骤。已发出的券是领取时的快照，改模板不影响它们。
+onlineCatalogRouter.get('/online-catalog/coupon-templates', wrap(async (req, res) => {
+  requireConsole(req.user, 'marketing')
+  const publisher = await getOnlineCatalogPublisher()
+  const rows = await publisher.listCouponTemplates()
+  res.json({ ok: true, templates: rows.map(serializeCouponTemplate) })
+}))
+
+onlineCatalogRouter.post('/online-catalog/coupon-templates', wrap(async (req, res) => {
+  requireConsole(req.user, 'marketing')
+  const publisher = await getOnlineCatalogPublisher()
+  const data = normalizeCouponTemplate(req.body, null)
+  const id = newCouponTemplateId()
+  const result = await publisher.writeCouponTemplate({ _id: id, ...data })
+  res.status(201).json({ ok: true, template: serializeCouponTemplate(result.doc) })
+}))
+
+onlineCatalogRouter.put('/online-catalog/coupon-templates/:id', wrap(async (req, res) => {
+  requireConsole(req.user, 'marketing')
+  const publisher = await getOnlineCatalogPublisher()
+  const existing = await publisher.readCouponTemplate(String(req.params.id))
+  if (!existing) throw httpError('券模板不存在', 404)
+  const data = normalizeCouponTemplate(req.body, existing)
+  const result = await publisher.writeCouponTemplate({ _id: String(req.params.id), ...data })
+  res.json({ ok: true, template: serializeCouponTemplate(result.doc) })
 }))
 
 onlineCatalogRouter.get('/online-catalog/categories', wrap(async (req, res) => {
