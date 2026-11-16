@@ -65,10 +65,13 @@ export default function CategoryBoard() {
         name: form.name,
         sortOrder: Number(form.sortOrder) || 0,
         isActive: form.isActive !== false,
+        // 副标题落在 meta.sub：发布商品时写进小程序商品文档的 categoryMeta.sub，
+        // 首页「按类选购」显示的就是它（见 pages/home/home.js）。
+        meta: { ...(form.meta || {}), sub: String(form.sub || '').trim() },
       }
       if (form.id) {
         await api(`/v2/online-catalog/categories/${form.id}`, { method: 'PUT', body: JSON.stringify(payload) })
-        setNotice('分类已更新；已发布商品的分类名会在下次发布时同步。')
+        setNotice('分类已更新。副标题需要重新发布该分类下的商品才会同步到小程序。')
       } else {
         await api('/v2/online-catalog/categories', { method: 'POST', body: JSON.stringify(payload) })
         setNotice('分类已创建。')
@@ -89,7 +92,7 @@ export default function CategoryBoard() {
           <button type="button" onClick={load} className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-xl border border-slate-200 px-3 text-sm text-slate-600 hover:bg-slate-50 sm:h-8 sm:flex-none">
             <RefreshCw size={14} /> 刷新
           </button>
-          <button type="button" onClick={() => setForm({ name: '', sortOrder: categories.length, isActive: true })} className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-xl bg-budu-500 px-4 text-sm font-semibold text-white disabled:opacity-50 sm:h-8 sm:flex-none">
+          <button type="button" onClick={() => setForm({ name: '', sortOrder: categories.length, isActive: true, sub: '', meta: {} })} className="inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-xl bg-budu-500 px-4 text-sm font-semibold text-white disabled:opacity-50 sm:h-8 sm:flex-none">
             <Plus size={15} /> 新增分类
           </button>
         </div>
@@ -128,7 +131,7 @@ export default function CategoryBoard() {
                   </td>
                   <td className="px-3 py-3 text-[11px] text-slate-400">{fmtDate(category.updatedAt)}</td>
                   <td className="px-4 py-3 text-right">
-                    <button type="button" onClick={() => setForm({ ...category })} className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2.5 text-xs text-slate-600 hover:bg-slate-50">
+                    <button type="button" onClick={() => setForm({ ...category, sub: (category.meta && category.meta.sub) || '' })} className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2.5 text-xs text-slate-600 hover:bg-slate-50">
                       <Pencil size={12} /> 编辑
                     </button>
                   </td>
@@ -173,6 +176,14 @@ export default function CategoryBoard() {
               <label className="block text-xs text-slate-500">
                 分类名称
                 <input className={`mt-1 ${inputClass}`} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} maxLength={20} />
+              </label>
+              <label className="block text-xs text-slate-500">
+                副标题<span className="ml-1 text-[10px] text-slate-400">小程序首页分类行右侧那行小字</span>
+                <input className={`mt-1 ${inputClass}`} value={form.sub || ''} onChange={(e) => setForm((f) => ({ ...f, sub: e.target.value }))} maxLength={30} placeholder="例如 手工生巧 · 需冷冻保存" />
+              </label>
+              <label className="block text-xs text-slate-500">
+                副标题<span className="ml-1 text-[10px] text-slate-400">小程序首页分类行右侧那行小字</span>
+                <input className={`mt-1 ${inputClass}`} value={form.sub || ''} onChange={(e) => setForm((f) => ({ ...f, sub: e.target.value }))} maxLength={30} placeholder="例如 手工生巧 · 需冷冻保存" />
               </label>
               <label className="block text-xs text-slate-500">
                 排序值（越小越靠前）
