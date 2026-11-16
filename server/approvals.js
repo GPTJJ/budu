@@ -703,7 +703,11 @@ approvalRouter.post('/approvals/requests/:id/decide', wrap(async (req, res) => {
   if (currentNode.approverUsername !== req.user.username) {
     const who = (ctx.users.find((u) => u.username === currentNode.approverUsername) || {}).displayName
       || currentNode.approverUsername
-    throw httpError(`当前轮到 ${who} 审批，你暂不能操作`, 403)
+    // 2026-11-16：原来只说“你暂不能操作”，最常见的真实原因其实是这台设备登着别人的账号，
+    // 用户无法自查。这里把当前登录账号一并说出来，并留一条服务端日志便于追溯。
+    const me = req.user.displayName ? `${req.user.displayName}（${req.user.username}）` : req.user.username
+    console.warn(`[approval-deny] decide requestNo=${request.requestNo || request.id} actor=${req.user.username} currentApprover=${currentNode.approverUsername}`)
+    throw httpError(`当前轮到 ${who} 审批，你当前登录的是 ${me}，请切换账号后再操作`, 403)
   }
 
   let nextApprover = null
