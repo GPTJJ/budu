@@ -16,7 +16,7 @@ import { orderPurposeRouter } from './order-purpose.js'
 import { payrollAuditAdminRouter } from './payroll-audit-admin.js'
 import { productsRouter } from './products.js'
 import { onlineCatalogRouter } from './online-catalog.js'
-import { setShippingRegistrar } from './online-console-bridge.js'
+import { setShippingRegistrar, setLegacyShippingUploader } from './online-console-bridge.js'
 import { posRouter } from './pos.js'
 import { scheduleRouter } from './schedule.js'
 import { payrollNoticeRouter } from './payroll-notice.js'
@@ -307,6 +307,8 @@ export function createApp({ onlineCheckoutRuntime = null, storeServiceRuntime = 
   onlineCheckoutRuntime?.mount(app)
   // OS 控制台发货后复用同一套微信发货同步（未装配时跳过）
   setShippingRegistrar(onlineCheckoutRuntime ? (settlementId) => onlineCheckoutRuntime.registerShipping(settlementId) : null)
+  // 小程序订单在 OS 发货时的微信上传通道（与在线结算共用 access_token 权威）
+  setLegacyShippingUploader(onlineCheckoutRuntime ? (input) => onlineCheckoutRuntime.uploadLegacyShipping(input) : null)
   storeServiceRuntime?.mount(app)
   app.use(express.json({ limit: '15mb' }))
   app.use(cookieParser())

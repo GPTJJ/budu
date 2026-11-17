@@ -54,6 +54,10 @@ export function createOnlineCheckoutRuntime({db,gatewayConfig,paymentConfig,mirr
     async registerShipping(settlementId) {
       return shippingSync.register({ settlementId })
     },
+    // 小程序 legacy 订单在 OS 发货时上传微信发货信息。只复用客户端，不碰结算状态机。
+    async uploadLegacyShipping(input) {
+      return wechatShippingClient.upload(input)
+    },
     async tick() {
       // Exposed for controlled one-shot operational recovery and isolated tests.
       // No caller money/state and no switch required to finish existing facts.

@@ -17,8 +17,9 @@ import { hasModuleAccess, isSuperUser, MODULE_KEYS, MP_CONSOLE_MODULE_KEYS, canM
 import { getOnlineCatalogPublisher, buildProductDoc, checksum } from './online-catalog-publisher.js'
 import { enumerateOnlineSkus } from './online-catalog-coverage.js'
 import { createOnlineFulfillment } from './online-fulfillment.js'
-import { registerWechatShipping } from './online-console-bridge.js'
-import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls } from './online-catalog-media.js'
+import { registerWechatShipping, uploadLegacyShipping } from './online-console-bridge.js'
+import { shipLegacyArchiveOrder } from './mini-program-legacy-shipping.js'
+import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls, getCloudBaseClient } from './online-catalog-media.js'
 import { syncOrderArchive } from './order-archive-sync.js'
 import { uploadCatalogImage } from './online-catalog-upload.js'
 import { DEFAULT_BANNERS } from './online-banner-defaults.js'
@@ -441,7 +442,7 @@ onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
   // 净成交：已支付且未整单退款
   const settledWhere = (from) => ({ paidAt: { gte: from }, status: { not: 'REFUNDED' } })
 
-  const [productTotal, productOn, productDraft, productFailed, last7, today, refundPending, refundTotal, paidRows, shippedRows] = await Promise.all([
+  const [productTotal, productOn, productDraft, productFailed, last7, today, refundPending, refundTotal, paidRows, shippedRows, archiveLast7, archiveToday, archivePending] = await Promise.all([
     prisma.onlineProductProfile.count(),
     prisma.onlineProductProfile.count({ where: { status: 'ON' } }),
     prisma.onlineProductProfile.count({ where: { status: 'DRAFT' } }),
@@ -453,6 +454,17 @@ onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
     // 只有「已支付且未整单退款」的订单才可能待发货
     prisma.onlineSettlement.findMany({ where: { paidAt: { not: null }, status: { not: 'REFUNDED' } }, select: { id: true } }),
     prisma.onlineFulfillmentAuthorization.findMany({ select: { settlementId: true } }),
+    // 小程序订单（legacy）在 OS 只读镜像里；概览必须一起算，否则「今日成交额 ¥0」
+    // 会和交易分析（已并入归档）自相矛盾。
+    prisma.onlineOrderArchive.aggregate({
+      where: { paidAt: { not: null }, createdAt: { gte: since } },
+      _count: { _all: true }, _sum: { paidCents: true },
+    }),
+    prisma.onlineOrderArchive.aggregate({
+      where: { paidAt: { not: null }, createdAt: { gte: todayStart } },
+      _count: { _all: true }, _sum: { paidCents: true },
+    }),
+    prisma.onlineOrderArchive.count({ where: { status: 'PENDING_SHIPMENT' } }),
   ])
   const shippedIds = new Set(shippedRows.map((row) => row.settlementId))
   const pendingFulfillment = paidRows.filter((row) => !shippedIds.has(row.id)).length
@@ -462,12 +474,14 @@ onlineCatalogRouter.get('/online-catalog/overview', wrap(async (req, res) => {
     generatedAt: now.toISOString(),
     products: { total: productTotal, on: productOn, draft: productDraft, failed: productFailed },
     orders: {
-      last7: last7._count._all,
-      last7Cents: Number(last7._sum.totalCents || 0),
-      today: today._count._all,
-      todayCents: Number(today._sum.totalCents || 0),
+      last7: last7._count._all + archiveLast7._count._all,
+      last7Cents: Number(last7._sum.totalCents || 0) + Number(archiveLast7._sum.paidCents || 0),
+      today: today._count._all + archiveToday._count._all,
+      todayCents: Number(today._sum.totalCents || 0) + Number(archiveToday._sum.paidCents || 0),
+      archiveToday: archiveToday._count._all,
+      archiveTodayCents: Number(archiveToday._sum.paidCents || 0),
     },
-    fulfillment: { paid: paidRows.length, shipped: shippedIds.size, pending: pendingFulfillment },
+    fulfillment: { paid: paidRows.length, shipped: shippedIds.size, pending: pendingFulfillment + archivePending },
     refunds: { pending: refundPending, total: refundTotal },
   })
 }))
@@ -1570,6 +1584,12 @@ export function serializeArchiveOrder(row) {
     totalCents: String(row.totalCents),
     paidCents: String(row.paidCents),
     refundCents: String(row.refundCents),
+    // 券抵扣：归档表没有独立列，从 raw 快照取。缺了这行，商品+运费≠实付会被当成算错。
+    discountCents: String(
+      Number(((row.raw && row.raw.amountCent && row.raw.amountCent.discountCent) ||
+        Math.round(Number((row.raw && row.raw.discountTotal) || 0) * 100)) || 0)
+    ),
+    couponName: String((row.raw && row.raw.coupon && row.raw.coupon.name) || ''),
     deliveryType: row.deliveryType,
     deliveryLabel: row.deliveryType === 'pickup' ? '门店自提' : row.deliveryType === 'delivery' ? '快递配送' : '—',
     storeName: row.storeName,
@@ -1593,6 +1613,23 @@ onlineCatalogRouter.post('/online-catalog/order-archive/sync', wrap(async (req, 
   requireConsole(req.user, 'orders')
   const result = await syncOrderArchive()
   res.json({ ok: true, ...result })
+}))
+
+// 小程序订单在 OS 直接发货：写回 CloudBase orders（权威）+ best-effort 同步微信。
+onlineCatalogRouter.post('/online-catalog/order-archive/:payNo/ship', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireConsole(req.user, 'orders', 'shipments')
+  const payNo = text(req.params.payNo, 40, '订单号')
+  const body = req.body && typeof req.body === 'object' ? req.body : {}
+  const result = await shipLegacyArchiveOrder({
+    payNo,
+    carrierCode: body.carrierCode,
+    trackingNo: body.trackingNo,
+    prisma,
+    cloudbase: await getCloudBaseClient(),
+    upload: uploadLegacyShipping,
+  })
+  res.json(result)
 }))
 
 onlineCatalogRouter.get('/online-catalog/order-archive', wrap(async (req, res) => {

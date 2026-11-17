@@ -12,6 +12,17 @@ import { formatCents } from '../utils/pos'
 
 const PAGE_SIZE = 20
 
+// 与小程序商家管理同一套承运商码（微信发货信息管理的 delivery_id 映射在服务端）
+const CARRIER_LABELS = {
+  SF: '顺丰速运',
+  ZTO: '中通快递',
+  YTO: '圆通速递',
+  YUNDA: '韵达速递',
+  STO: '申通快递',
+  JD: '京东快递',
+  EMS: 'EMS',
+}
+
 // 同一会话内 60 秒只自动同步一次：切来切去不必反复拉云端
 let lastAutoSyncAt = 0
 
@@ -68,6 +79,11 @@ export default function OrderArchiveBoard() {
   const [detail, setDetail] = useState(null)
   const [syncing, setSyncing] = useState(false)
   const [syncedAt, setSyncedAt] = useState('')
+  // 发货（在 OS 直接发小程序订单）
+  const [shipCarrier, setShipCarrier] = useState('SF')
+  const [shipTracking, setShipTracking] = useState('')
+  const [shipping, setShipping] = useState(false)
+  const [shipNotice, setShipNotice] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -122,6 +138,35 @@ export default function OrderArchiveBoard() {
     }
   }
 
+  const submitShip = async () => {
+    if (!detail || shipping) return
+    const trackingNo = shipTracking.trim()
+    if (!/^[A-Za-z0-9_-]{4,80}$/.test(trackingNo)) {
+      setError('运单号格式不正确（4–80 位字母数字）')
+      return
+    }
+    setShipping(true)
+    setError('')
+    setShipNotice('')
+    try {
+      const res = await api(`/v2/online-catalog/order-archive/${detail.payNo}/ship`, {
+        method: 'POST',
+        body: JSON.stringify({ carrierCode: shipCarrier, trackingNo }),
+      })
+      const wxStatus = res && res.wechat ? res.wechat.status : ''
+      setDetail((prev) => prev ? { ...prev, state: 'SHIPPED', stateLabel: '已发货', carrier: res.carrier || shipCarrier, trackingNo: res.trackingNo || trackingNo, shippedAt: res.shippedAt } : prev)
+      setShipTracking('')
+      setShipNotice(wxStatus === 'SYNCED'
+        ? '已发货，微信发货信息已同步'
+        : `已发货；微信同步状态 ${wxStatus || '未执行'}（不影响发货，可稍后重试）`)
+      await load()
+    } catch (err) {
+      setError(err.message || '发货失败')
+    } finally {
+      setShipping(false)
+    }
+  }
+
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const empty = !loading && rows.length === 0
 
@@ -143,7 +188,7 @@ export default function OrderArchiveBoard() {
 
       <div className="mb-3 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 text-[11px] text-slate-500">
         <Archive size={13} className="shrink-0 text-slate-400" />
-        <span>只读归档：来自小程序历史下单记录，用于查询核对，不影响结算、发货与退款。{syncedAt ? ` 本次同步 ${new Date(syncedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+        <span>小程序订单：来自小程序下单记录，待发货订单可在详情直接发货（写回云端并同步微信）。{syncedAt ? ` 本次同步 ${new Date(syncedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
       </div>
 
       <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center">
@@ -263,7 +308,9 @@ export default function OrderArchiveBoard() {
             <div className="flex-1 overflow-y-auto px-4 py-4">
               <div className="mb-4 flex items-center gap-2">
                 <StatePill state={detail.state} label={detail.stateLabel} />
-                <span className="text-[11px] text-slate-400">只读归档</span>
+                <span className="text-[11px] text-slate-400">
+                  {detail.state === 'PENDING_SHIPMENT' && detail.deliveryType !== 'pickup' ? '可在此发货' : '小程序订单'}
+                </span>
               </div>
 
               <div className="mb-4 rounded-xl border border-slate-200 p-3">
@@ -280,6 +327,9 @@ export default function OrderArchiveBoard() {
                 <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-[11px] text-slate-500">
                   <div className="flex justify-between"><span>商品金额</span><span>{formatCents(detail.goodsCents)}</span></div>
                   <div className="flex justify-between"><span>运费</span><span>{formatCents(detail.shippingCents)}</span></div>
+                  {Number(detail.discountCents) > 0 ? (
+                    <div className="flex justify-between text-budu-700"><span>优惠券{detail.couponName ? ` · ${detail.couponName}` : ''}</span><span>−{formatCents(detail.discountCents)}</span></div>
+                  ) : null}
                   <div className="flex justify-between font-medium text-slate-700"><span>实付</span><span>{formatCents(detail.paidCents || detail.totalCents)}</span></div>
                   {Number(detail.refundCents) > 0 ? <div className="flex justify-between text-rose-600"><span>已退款</span><span>{formatCents(detail.refundCents)}</span></div> : null}
                 </div>
@@ -292,6 +342,24 @@ export default function OrderArchiveBoard() {
                 {detail.storeName ? <div className="mt-1 text-[11px] text-slate-500">门店：{detail.storeName}</div> : null}
                 {detail.trackingNo ? <div className="mt-1 text-[11px] text-slate-500">物流：{detail.carrier || '—'} {detail.trackingNo}</div> : null}
               </div>
+
+              {detail.state === 'PENDING_SHIPMENT' && detail.deliveryType !== 'pickup' ? (
+                <div className="mb-4 rounded-xl border border-budu-200 bg-budu-50/40 p-3">
+                  <div className="mb-2 text-[11px] text-slate-500">发货（写回小程序订单并同步微信）</div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <select value={shipCarrier} onChange={(e) => setShipCarrier(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-xs">
+                      {Object.entries(CARRIER_LABELS).map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+                    </select>
+                    <input value={shipTracking} onChange={(e) => setShipTracking(e.target.value)} placeholder="运单号" maxLength={80} className="h-9 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-xs" />
+                    <button type="button" disabled={shipping} onClick={submitShip} className="h-9 rounded-lg bg-budu-600 px-3 text-xs font-semibold text-white disabled:opacity-50">
+                      {shipping ? '发货中…' : '确认发货'}
+                    </button>
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-400">发货事实以云端订单为准；微信发货信息同步失败不影响发货，可稍后重试。</p>
+                </div>
+              ) : null}
+
+              {shipNotice ? <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">{shipNotice}</div> : null}
 
               <div className="rounded-xl border border-slate-200 p-3 text-xs">
                 <div className="mb-2 text-[11px] text-slate-400">时间线</div>

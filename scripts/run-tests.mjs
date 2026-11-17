@@ -69,6 +69,7 @@ const NODE_TEST_SUITE = [
   'test-alipay-pg-integration.mjs', // 支付宝幂等/退款并发（可弃用 PostgreSQL schema）
   'test-notification-center.mjs',   // 通知中心/企业微信自建应用推送（单元 + 真实 PostgreSQL）
   'test-customer-request-wecom-unit.mjs', // CustomerRequest 固定 UserID 企微投递/幂等/隐私/深链
+  'test-mini-program-legacy-shipping.mjs', // 小程序订单在 OS 发货（云端权威 + 微信 best-effort）
   'test-approval-ui-regressions.mjs', // 工资提交成功动画与移动端通知层级回归
   'test-approval-withdraw-race.mjs', // Approval 撤回与审批 CAS 竞争（隔离 PGlite + 确定性 HTTP）
   'test-wechat-v2-signature.mjs',   // 微信 V2 签名/XML 安全（单元）

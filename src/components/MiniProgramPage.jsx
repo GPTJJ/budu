@@ -63,7 +63,7 @@ const MODULES = [
       { key: 'orders-shipped', label: '已发货', state: 'SHIPPED' },
       { key: 'orders-refunded', label: '已退款', state: 'REFUNDED' },
       { key: 'orders-cancelled', label: '已取消', state: 'CANCELLED' },
-      { key: 'orders-archive', label: '历史订单', desc: '只读归档：上线以来的小程序历史订单，可检索核对，不影响结算、发货与退款' },
+      { key: 'orders-archive', label: '小程序订单', desc: '小程序下单记录，待发货订单可在详情直接发货（写回云端并同步微信）' },
     ],
   },
   {

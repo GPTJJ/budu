@@ -15,3 +15,16 @@ export async function registerWechatShipping(settlementId) {
   if (!shippingRegistrar) return { skipped: true }
   return shippingRegistrar(settlementId)
 }
+
+// 小程序（legacy payOrder）订单在 OS 发货时，微信发货信息必须复用运行时那套
+// access_token 客户端。未注入时返回 UNSUPPORTED —— 发货事实照常成立。
+let legacyShippingUploader = null
+
+export function setLegacyShippingUploader(fn) {
+  legacyShippingUploader = typeof fn === 'function' ? fn : null
+}
+
+export async function uploadLegacyShipping(input) {
+  if (!legacyShippingUploader) return { status: 'UNSUPPORTED' }
+  return legacyShippingUploader(input)
+}
