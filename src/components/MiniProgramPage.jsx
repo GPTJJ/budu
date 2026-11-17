@@ -14,7 +14,6 @@ import {
 import { api } from '../utils/api'
 import { formatCents } from '../utils/pos'
 import OnlineCatalogPage from './OnlineCatalogPage'
-import OnlineOrderBoard from './OnlineOrderBoard'
 import AfterSalesBoard from './AfterSalesBoard'
 import AnalyticsBoard from './AnalyticsBoard'
 import BannerBoard from './BannerBoard'
@@ -65,7 +64,6 @@ const MODULES = [
       { key: 'orders-completed', label: '已完成', state: 'COMPLETED', archive: true },
       { key: 'orders-refunded', label: '已退款', state: 'REFUNDED', archive: true },
       { key: 'orders-cancelled', label: '已取消', state: 'CANCELLED', archive: true },
-      { key: 'orders-settlements', label: '在线结算单', desc: 'OS 在线结算链（当前未启用）；小程序订单请看前面的标签' },
     ],
   },
   {
@@ -346,9 +344,6 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
     if (viewKey === 'products-combo') return <ComboBoard onGo={go} />
     // 订单/发货默认读小程序真实订单：点任意一行可看详情、直接发货。
     if (view.archive) return <OrderArchiveBoard key={viewKey} initialState={view.state || ''} hideFilters />
-    if (viewKey === 'orders-settlements') {
-      return <OnlineOrderBoard key={viewKey} initialState="" title="在线结算单" showFilters />
-    }
     if (module.key === 'after-sales') return <AfterSalesBoard key={viewKey} initialState={view.state || ''} />
     if (viewKey === 'data-trade') return <AnalyticsBoard key={viewKey} />
     if (viewKey === 'data-product') return <ProductPerformanceBoard />
