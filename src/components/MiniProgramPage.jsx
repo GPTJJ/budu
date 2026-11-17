@@ -58,12 +58,14 @@ const MODULES = [
     icon: ReceiptText,
     desc: '小程序订单检索与履约：点任意一行打开详情，可直接发货',
     views: [
-      { key: 'orders', label: '全部订单', state: '' },
-      { key: 'orders-pending', label: '待发货', state: 'TO_SHIP' },
-      { key: 'orders-shipped', label: '已发货', state: 'SHIPPED' },
-      { key: 'orders-refunded', label: '已退款', state: 'REFUNDED' },
-      { key: 'orders-cancelled', label: '已取消', state: 'CANCELLED' },
-      { key: 'orders-archive', label: '小程序订单', desc: '小程序下单记录，待发货订单可在详情直接发货（写回云端并同步微信）' },
+      // 默认展示小程序真实订单（archive）；在线结算链从未成交，单独放最后一项。
+      { key: 'orders', label: '全部订单', state: '', archive: true },
+      { key: 'orders-pending', label: '待发货', state: 'PENDING_SHIPMENT', archive: true },
+      { key: 'orders-shipped', label: '已发货', state: 'SHIPPED', archive: true },
+      { key: 'orders-completed', label: '已完成', state: 'COMPLETED', archive: true },
+      { key: 'orders-refunded', label: '已退款', state: 'REFUNDED', archive: true },
+      { key: 'orders-cancelled', label: '已取消', state: 'CANCELLED', archive: true },
+      { key: 'orders-settlements', label: '在线结算单', desc: 'OS 在线结算链（当前未启用）；小程序订单请看前面的标签' },
     ],
   },
   {
@@ -83,8 +85,8 @@ const MODULES = [
     icon: Truck,
     desc: '待发货订单集中处理：填单号即发货，并自动登记微信发货信息',
     views: [
-      { key: 'shipments', label: '待发货', state: 'TO_SHIP' },
-      { key: 'shipments-done', label: '已发货', state: 'SHIPPED' },
+      { key: 'shipments', label: '待发货', state: 'PENDING_SHIPMENT', archive: true },
+      { key: 'shipments-done', label: '已发货', state: 'SHIPPED', archive: true },
     ],
   },
   {
@@ -342,9 +344,10 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
     if (viewKey === 'products') return <OnlineCatalogPage embedded />
     if (viewKey === 'products-category') return <CategoryBoard />
     if (viewKey === 'products-combo') return <ComboBoard onGo={go} />
-    if (viewKey === 'orders-archive') return <OrderArchiveBoard key={viewKey} />
-    if ((module.key === 'orders' || module.key === 'shipments') && view.state !== 'ISSUE') {
-      return <OnlineOrderBoard key={viewKey} initialState={view.state || ''} title={view.label} showFilters={moduleKey === 'orders'} />
+    // 订单/发货默认读小程序真实订单：点任意一行可看详情、直接发货。
+    if (view.archive) return <OrderArchiveBoard key={viewKey} initialState={view.state || ''} hideFilters />
+    if (viewKey === 'orders-settlements') {
+      return <OnlineOrderBoard key={viewKey} initialState="" title="在线结算单" showFilters />
     }
     if (module.key === 'after-sales') return <AfterSalesBoard key={viewKey} initialState={view.state || ''} />
     if (viewKey === 'data-trade') return <AnalyticsBoard key={viewKey} />

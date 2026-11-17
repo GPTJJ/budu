@@ -66,8 +66,8 @@ function maskPhone(phone) {
   return `${value.slice(0, 3)}****${value.slice(-4)}`
 }
 
-export default function OrderArchiveBoard() {
-  const [state, setState] = useState('')
+export default function OrderArchiveBoard({ initialState = '', hideFilters = false }) {
+  const [state, setState] = useState(initialState)
   const [keyword, setKeyword] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -193,7 +193,7 @@ export default function OrderArchiveBoard() {
 
       <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center">
         <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 lg:mx-0 lg:flex-wrap lg:pb-0">
-          {FILTERS.map((item) => (
+          {hideFilters ? null : FILTERS.map((item) => (
             <button
               key={item.key || 'all'}
               type="button"
