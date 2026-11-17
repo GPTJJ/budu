@@ -1990,6 +1990,47 @@ v2Router.get('/big-bonuses', wrap(async (req, res) => {
   res.json({ rows: rows.map(serializeBigBonus) })
 }))
 
+/**
+ * 把一笔金额按人数均分，尾差给前面的人（分）。
+ * 例：179400/2 → [89700, 89700]；100/3 → [34, 33, 33]。
+ */
+export function splitBonusCents(totalCents, count) {
+  const total = Number(totalCents)
+  const n = Number(count)
+  if (!Number.isInteger(total) || total <= 0) throw bad('金额不正确')
+  if (!Number.isInteger(n) || n < 1 || n > 10) throw bad('人数不正确')
+  return Array.from({ length: n }, (_, index) => Math.floor(total / n) + (index < total % n ? 1 : 0))
+}
+
+// 当天该店在岗人员（供大单奖「共同值班平分」选择）
+v2Router.get('/big-bonuses/participants', wrap(async (req, res) => {
+  if (!dbReady()) throw bad('数据库未配置', 503)
+  if (!canInvoice(req.user)) throw bad('无权限', 403)
+  if (req.user.role === 'staff') throw bad('无权限', 403)
+  const storeKey = String(req.query.store || '')
+  const dateStr = String(req.query.date || '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) throw bad('日期不正确')
+  if (!canStore(req.user, storeKey)) throw bad('无权限', 403)
+  const rows = await prisma.dailyStoreStaff.findMany({
+    where: { storeId: storeKey, date: new Date(`${dateStr}T00:00:00.000Z`) },
+    select: { employeeId: true, staffNameSnapshot: true, attendanceStatus: true, actualHours: true },
+    orderBy: { staffNameSnapshot: 'asc' },
+  })
+  const seen = new Set()
+  const people = []
+  for (const row of rows) {
+    if (!row.employeeId || seen.has(row.employeeId)) continue
+    seen.add(row.employeeId)
+    people.push({
+      employeeId: row.employeeId,
+      name: row.staffNameSnapshot,
+      attendanceStatus: row.attendanceStatus,
+      hours: row.actualHours == null ? null : Number(row.actualHours),
+    })
+  }
+  res.json({ rows: people })
+}))
+
 v2Router.post('/big-bonuses', wrap(async (req, res) => {
   if (!dbReady()) throw bad('数据库未配置', 503)
   if (!canInvoice(req.user)) throw bad('无权限', 403)
@@ -2013,6 +2054,49 @@ v2Router.post('/big-bonuses', wrap(async (req, res) => {
   const receiptStr = String(receipt || '').trim()
   if (receiptStr && !/^data:image\/[a-z0-9.+-]+;base64,/i.test(receiptStr)) throw bad('小票图片格式不正确')
   if (receiptStr.length > 10 * 1024 * 1024) throw bad('小票图片过大（最大约 7MB）')
+
+  // 共同值班平分：多人当天一起值班时，订单金额与奖金都按人数均分，
+  // 尾差给前面的人；总奖金严格等于 round(订单金额 × 5%)，汇总不失真。
+  const participants = Array.isArray(req.body && req.body.participants) ? req.body.participants : []
+  if (participants.length) {
+    if (req.user.role === 'staff') throw bad('只能为本人登记大单奖', 403)
+    if (participants.length < 2) throw bad('共同值班至少两人；单人请直接登记')
+    if (participants.length > 10) throw bad('共同值班最多 10 人')
+    const ids = participants.map((p) => String((p && p.employeeId) || '').trim())
+    const names = participants.map((p) => String((p && p.staffName) || '').trim())
+    if (ids.some((id) => !id) || new Set(ids).size !== ids.length) throw bad('共同获奖人信息不正确')
+    if (names.some((name) => !name || name.length > 30)) throw bad('员工姓名不正确')
+    const found = await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true } })
+    if (found.length !== ids.length) throw bad('员工不存在', 400)
+    const bonusDate = date ? dateOnly(date) : new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z')
+    const dutyRows = await prisma.dailyStoreStaff.findMany({
+      where: { storeId: storeKey, date: bonusDate, employeeId: { in: ids } },
+      select: { employeeId: true },
+    })
+    const onDuty = new Set(dutyRows.map((row) => row.employeeId))
+    const missing = names.filter((_, index) => !onDuty.has(ids[index]))
+    if (missing.length) throw bad(`以下员工当天在该店没有排班：${missing.join('、')}`, 400)
+    const totalBonus = Math.round(cents * 0.05)
+    const amounts = splitBonusCents(cents, participants.length)
+    const bonusesSplit = splitBonusCents(totalBonus, participants.length)
+    await ensureStore(storeKey)
+    const created = await prisma.$transaction(participants.map((_, index) => prisma.bigOrderBonus.create({
+      data: {
+        id: uid('bb'),
+        employeeId: ids[index],
+        staffKey: `${storeKey}::${names[index]}`,
+        staffName: names[index],
+        storeKey,
+        date: bonusDate,
+        amountCents: BigInt(amounts[index]),
+        bonusCents: BigInt(bonusesSplit[index]),
+        receipt: receiptStr.slice(0, 10 * 1024 * 1024),
+        createdBy: req.user.username,
+      },
+    })))
+    return res.json({ ok: true, split: true, count: created.length, bonuses: created.map(serializeBigBonus) })
+  }
+
   const bonusCents = Math.round(cents * 0.05)
   await ensureStore(storeKey)
   const bonusDate = date ? dateOnly(date) : new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z')

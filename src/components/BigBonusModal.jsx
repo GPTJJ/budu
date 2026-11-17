@@ -18,6 +18,10 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [tip, setTip] = useState('')
+  // 共同值班平分：当天该店在岗员工
+  const [people, setPeople] = useState([])
+  const [selectedIds, setSelectedIds] = useState([])
+  const [loadingPeople, setLoadingPeople] = useState(false)
   const fileRef = useRef(null)
   const cameraRef = useRef(null)
 
@@ -41,6 +45,45 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (!emp.id) { setPeople([]); setSelectedIds([]); return }
+      setLoadingPeople(true)
+      try {
+        const d = await api(`/v2/big-bonuses/participants?store=${encodeURIComponent(emp.storeKey)}&date=${date}`)
+        if (cancelled) return
+        const list = Array.isArray(d.rows) ? d.rows : []
+        setPeople(list)
+        setSelectedIds((prev) => {
+          const keep = prev.filter((id) => list.some((p) => p.employeeId === id))
+          return keep.length ? keep : [emp.id]
+        })
+      } catch {
+        if (!cancelled) { setPeople([]); setSelectedIds([emp.id]) }
+      } finally {
+        if (!cancelled) setLoadingPeople(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [date, emp.id, emp.storeKey])
+
+  const candidates = useMemo(() => {
+    const others = people
+      .filter((p) => p.employeeId && p.employeeId !== emp.id)
+      .map((p) => ({ id: p.employeeId, name: p.name, hours: p.hours, locked: false }))
+    return emp.id ? [{ id: emp.id, name: emp.name, hours: null, locked: true }, ...others] : others
+  }, [people, emp.id, emp.name])
+
+  const splitPreview = useMemo(() => {
+    const cents = Math.round((Number(amount) || 0) * 100)
+    const count = selectedIds.length
+    if (!cents || count < 2) return null
+    const totalBonus = Math.round(cents * 0.05)
+    const share = (total, index) => Math.floor(total / count) + (index < total % count ? 1 : 0)
+    return { count, each: share(cents, 0), bonus: share(totalBonus, 0), rest: cents % count }
+  }, [amount, selectedIds])
 
   const bonusCents = useMemo(() => {
     const cents = Math.round((Number(amount) || 0) * 100)
@@ -85,6 +128,12 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
     }
     setBusy(true)
     try {
+      const participants = selectedIds.length > 1
+        ? selectedIds.map((id) => {
+          const person = candidates.find((p) => p.id === id)
+          return { employeeId: id, staffName: person ? person.name : '' }
+        })
+        : null
       await api('/v2/big-bonuses', {
         method: 'POST',
         body: JSON.stringify({
@@ -96,13 +145,16 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
           date,
           amountCents: cents,
           receipt,
+          // 共同值班：服务端按人数平分订单金额与奖金，合计仍为 5%
+          ...(participants ? { participants } : {}),
         }),
       })
       setAmount('')
       setDate(new Date().toISOString().slice(0, 10))
       setReceipt('')
       setPreview('')
-      setTip(t('大单奖已记录 ✓'))
+      setTip(selectedIds.length > 1 ? t('已按 {n} 人平分记录 ✓', { n: selectedIds.length }) : t('大单奖已记录 ✓'))
+      setSelectedIds(emp.id ? [emp.id] : [])
       setTimeout(() => setTip(''), 2000)
       await load()
     } catch (err) {
@@ -170,6 +222,39 @@ export default function BigBonusModal({ emp, currentUser, onClose }) {
               <p className="text-[10px] font-semibold text-amber-600">{t('自动计算奖金')}</p>
               <p className="mt-0.5 text-lg font-bold tabular-nums text-amber-600">¥{yuan(bonusCents)}</p>
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-100 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-500">{t('共同值班（当天）')}</p>
+              {loadingPeople ? <span className="text-[10px] text-slate-400">{t('读取排班…')}</span> : null}
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {candidates.length ? candidates.map((person) => (
+                <label key={person.id} className="flex items-center gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-slate-300"
+                    checked={selectedIds.includes(person.id)}
+                    disabled={person.locked}
+                    onChange={(e) => {
+                      setSelectedIds((prev) => (e.target.checked
+                        ? Array.from(new Set([...prev, person.id]))
+                        : prev.filter((id) => id !== person.id)))
+                    }}
+                  />
+                  <span>{person.name}{person.locked ? ` · ${t('本人')}` : ''}</span>
+                  {person.hours != null ? <span className="text-[10px] text-slate-400">{person.hours}h</span> : null}
+                </label>
+              )) : <p className="text-[11px] text-slate-400">{t('当天没有排班记录，按单人记录')}</p>}
+            </div>
+            <p className="mt-2 text-[11px] text-slate-400">{t('勾选当天一起值班的同事，金额与奖金按人数平分')}</p>
+            {splitPreview ? (
+              <p className="mt-1 text-[11px] font-medium text-amber-600">
+                {t('按 {n} 人平分：每人约 ¥{each}，奖金 ¥{bonus}', { n: splitPreview.count, each: yuan(splitPreview.each), bonus: yuan(splitPreview.bonus) })}
+                {splitPreview.rest ? t('（尾差 {n} 分给前几位）', { n: splitPreview.rest }) : ''}
+              </p>
+            ) : null}
           </div>
 
           <div>
