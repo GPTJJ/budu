@@ -76,7 +76,7 @@ export default function AnalyticsBoard({ fixedDays = 0 }) {
         <div className="rounded-2xl border border-slate-200 bg-white">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
             <h2 className="text-sm font-semibold text-slate-700">每日订单与净成交</h2>
-            <span className="text-[11px] text-slate-400">{plotOrders ? '柱高＝订单数（该区间无净成交）' : '柱高＝净成交，标注＝订单数'}</span>
+            <span className="text-[11px] text-slate-400">{plotOrders ? '柱高＝订单数（该区间无净成交）' : '柱高＝净成交，上方为订单数与金额'}</span>
           </div>
           <div className="px-4 pb-4 pt-6">
             {series.length ? (
@@ -84,6 +84,9 @@ export default function AnalyticsBoard({ fixedDays = 0 }) {
                 {series.map((row) => (
                   <div key={row.date} className="group flex min-w-[18px] flex-1 flex-col items-center justify-end gap-1">
                     <span className="text-[9px] text-slate-400">{row.orders}</span>
+                    {!plotOrders && Number(row.paidCents) > 0 ? (
+                      <span className="text-[9px] font-medium text-budu-700">{formatCents(row.paidCents)}</span>
+                    ) : null}
                     <div
                       className={`w-full max-w-[26px] rounded-t bg-gradient-to-t ${plotOrders ? 'from-slate-400 to-slate-300' : 'from-budu-500 to-budu-300'}`}
                       style={{

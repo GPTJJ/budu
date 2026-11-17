@@ -831,6 +831,18 @@ onlineCatalogRouter.get('/online-catalog/refunds/:id', wrap(async (req, res) => 
  * 口径（用户 2026-11-15 确认）：已退款订单**不计入成交额**，只计入退款笔数与金额；
  * 未支付、已取消只计入订单数；成交按支付日归档。
  */
+/**
+ * 东八区自然日键（YYYY-MM-DD）。
+ *
+ * 原来用 `toISOString().slice(0,10)` 取的是 UTC 日期，凌晨 00:00–07:59（北京）
+ * 的订单会被算到前一天，曲线和「今日成交额」对不上。按门店所在时区取日。
+ */
+export function shanghaiDayKey(value) {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Date(date.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10)
+}
+
 export function mergeArchiveAnalytics(acc, rows) {
   const out = { orders: 0, paidOrders: 0, netOrders: 0, netCents: 0, grossCents: 0, refundedOrders: 0, refundCents: 0, cancelled: 0 }
   for (const row of rows || []) {
@@ -841,7 +853,7 @@ export function mergeArchiveAnalytics(acc, rows) {
     if (row.status === 'CANCELLED') out.cancelled += 1
 
     const stamp = row.paidAt || row.createdAt
-    const day = new Date(stamp).toISOString().slice(0, 10)
+    const day = shanghaiDayKey(stamp)
     if (!acc.buckets.has(day)) acc.buckets.set(day, { date: day, orders: 0, paidCents: 0 })
     acc.buckets.get(day).orders += 1
 
@@ -896,7 +908,7 @@ onlineCatalogRouter.get('/online-catalog/analytics', wrap(async (req, res) => {
   let cancelled = 0
 
   for (const row of rows) {
-    const day = new Date(row.createdAt).toISOString().slice(0, 10)
+    const day = shanghaiDayKey(row.createdAt)
     if (!buckets.has(day)) buckets.set(day, { date: day, orders: 0, paidCents: 0 })
     const bucket = buckets.get(day)
     bucket.orders += 1
