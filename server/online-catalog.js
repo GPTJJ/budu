@@ -18,7 +18,7 @@ import { getOnlineCatalogPublisher, buildProductDoc, checksum } from './online-c
 import { enumerateOnlineSkus } from './online-catalog-coverage.js'
 import { createOnlineFulfillment } from './online-fulfillment.js'
 import { registerWechatShipping, uploadLegacyShipping } from './online-console-bridge.js'
-import { shipLegacyArchiveOrder } from './mini-program-legacy-shipping.js'
+import { shipLegacyArchiveOrder, syncLegacyWechatShipping } from './mini-program-legacy-shipping.js'
 import { withDisplayMedia, withDisplayMediaOne, resolveTempUrls, getCloudBaseClient } from './online-catalog-media.js'
 import { syncOrderArchive } from './order-archive-sync.js'
 import { uploadCatalogImage } from './online-catalog-upload.js'
@@ -1608,6 +1608,7 @@ export function serializeArchiveOrder(row) {
     carrier: row.carrier,
     trackingNo: row.trackingNo,
     transactionId: row.transactionId,
+    wechatShippingStatus: String((row.raw && row.raw.wechatShippingStatus) || ''),
     customer: { name: row.recipientName, phone: row.recipientPhone, address: row.recipientAddress },
     lines: items.map((item) => ({
       id: item.productId || '',
@@ -1625,6 +1626,20 @@ onlineCatalogRouter.post('/online-catalog/order-archive/sync', wrap(async (req, 
   requireConsole(req.user, 'orders')
   const result = await syncOrderArchive()
   res.json({ ok: true, ...result })
+}))
+
+// 已发货订单的微信发货信息补同步（只重传，不改订单状态）。
+onlineCatalogRouter.post('/online-catalog/order-archive/:payNo/sync-shipping', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireConsole(req.user, 'orders', 'shipments')
+  const payNo = text(req.params.payNo, 40, '订单号')
+  const result = await syncLegacyWechatShipping({
+    payNo,
+    prisma,
+    cloudbase: await getCloudBaseClient(),
+    upload: uploadLegacyShipping,
+  })
+  res.json(result)
 }))
 
 // 小程序订单在 OS 直接发货：写回 CloudBase orders（权威）+ best-effort 同步微信。

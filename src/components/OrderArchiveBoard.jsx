@@ -84,6 +84,7 @@ export default function OrderArchiveBoard({ initialState = '', hideFilters = fal
   const [shipTracking, setShipTracking] = useState('')
   const [shipping, setShipping] = useState(false)
   const [shipNotice, setShipNotice] = useState('')
+  const [wechatSyncing, setWechatSyncing] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -164,6 +165,24 @@ export default function OrderArchiveBoard({ initialState = '', hideFilters = fal
       setError(err.message || '发货失败')
     } finally {
       setShipping(false)
+    }
+  }
+
+  const resyncWechat = async () => {
+    if (!detail || wechatSyncing) return
+    setWechatSyncing(true)
+    setError('')
+    setShipNotice('')
+    try {
+      const res = await api(`/v2/online-catalog/order-archive/${detail.payNo}/sync-shipping`, { method: 'POST' })
+      const status = res && res.wechat ? res.wechat.status : ''
+      setDetail((prev) => prev ? { ...prev, wechatShippingStatus: status } : prev)
+      setShipNotice(status === 'SYNCED' ? '微信发货信息已同步' : `同步结果：${status || '未执行'}（可稍后重试）`)
+      await load()
+    } catch (err) {
+      setError(err.message || '同步失败')
+    } finally {
+      setWechatSyncing(false)
     }
   }
 
@@ -360,6 +379,19 @@ export default function OrderArchiveBoard({ initialState = '', hideFilters = fal
               ) : null}
 
               {shipNotice ? <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">{shipNotice}</div> : null}
+
+              {['SHIPPED', 'COMPLETED'].includes(detail.state) ? (
+                <div className="mb-4 flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2 text-[11px] text-slate-500">
+                  <span>
+                    微信发货信息：{detail.wechatShippingStatus === 'SYNCED' ? '已同步' : (detail.wechatShippingStatus || '未同步')}
+                  </span>
+                  {detail.wechatShippingStatus !== 'SYNCED' ? (
+                    <button type="button" disabled={wechatSyncing} onClick={resyncWechat} className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] text-slate-600 disabled:opacity-50">
+                      {wechatSyncing ? '同步中…' : '重新同步'}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="rounded-xl border border-slate-200 p-3 text-xs">
                 <div className="mb-2 text-[11px] text-slate-400">时间线</div>

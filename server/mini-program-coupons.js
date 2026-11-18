@@ -11,10 +11,11 @@
 import crypto from 'node:crypto'
 import { httpError } from './pos-core.js'
 
-export const COUPON_SOURCES = ['newcomer', 'repurchase', 'share', 'manual', 'repurchase-code']
+export const COUPON_SOURCES = ['newcomer', 'campaign', 'repurchase', 'share', 'manual', 'repurchase-code']
 
 export const COUPON_SOURCE_LABELS = {
   newcomer: '新人券',
+  campaign: '活动券',
   repurchase: '首单复购券',
   share: '分享券',
   'repurchase-code': '复购码券',

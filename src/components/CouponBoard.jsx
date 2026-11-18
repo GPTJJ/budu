@@ -16,6 +16,7 @@ import { api } from '../utils/api'
 
 const SOURCES = [
   { value: 'newcomer', label: '新人券' },
+  { value: 'campaign', label: '活动券' },
   { value: 'repurchase', label: '首单复购券' },
   { value: 'share', label: '分享券' },
   { value: 'repurchase-code', label: '复购码券' },
@@ -298,6 +299,9 @@ export default function CouponBoard() {
                 <select className={inputClass} value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })}>
                   {SOURCES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                  新人券、活动券、手动发放会出现在顾客「可领取」列表；复购券、分享券、复购码由系统定向发放，不可自助领取。
+                </p>
               </Field>
               <Field label="状态">
                 <select className={inputClass} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>

@@ -44,6 +44,67 @@ export function toShippingStatus(result) {
  * @param {object} args.cloudbase    CloudBase node-sdk app（可为 null）
  * @param {Function} args.upload     微信发货上传器（可为 null）
  */
+/**
+ * 已发货订单的微信发货信息补同步（只重传，不改订单状态）。
+ * 用于发货时上传失败、或历史订单从未同步成功的情况。
+ */
+export async function syncLegacyWechatShipping({ payNo, prisma, cloudbase, upload, now = Date.now() }) {
+  const orderNo = requireText(payNo, '订单号', 40)
+  if (!cloudbase) throw httpError('CloudBase 未配置，无法读取订单', 503)
+  const db = cloudbase.database({ throwOnNotFound: false })
+  const docs = (await db.collection('orders').where({ payNo: orderNo }).limit(2).get()).data || []
+  if (docs.length !== 1) throw httpError('云端订单记录异常', 409)
+  const order = docs[0]
+  if (!['SHIPPED', 'COMPLETED'].includes(String(order.status))) {
+    throw httpError(`订单状态（${order.status}）无需同步发货信息`, 409)
+  }
+  if (String(order.wechatShippingStatus || '') === 'SYNCED') {
+    return { ok: true, already: true, wechat: { status: 'SYNCED', code: 0 } }
+  }
+  const isPickup = String(order.deliveryType || '') === 'pickup'
+  const trackingNo = String(order.trackingNo || '').trim()
+  const transactionId = String(order.transactionId || '').trim()
+  const openid = String(order.openid || '').trim()
+  if (!transactionId || !openid) throw httpError('缺少微信交易号或用户身份，无法同步', 409)
+  const delivery = isPickup ? null : resolveShippingDeliveryId(String(order.carrier || '').trim())
+  if (!isPickup && (!delivery || !trackingNo)) throw httpError('缺少承运商或运单号，无法同步', 409)
+  const itemDesc = buildItemDesc((order.items || []).map((item) => ({
+    name: item.productName || item.name,
+    quantity: item.qty || item.quantity,
+  })))
+  if (!itemDesc) throw httpError('订单缺少商品描述，无法同步', 409)
+  const contact = !isPickup && shippingCarrierRequiresContact(delivery.deliveryId)
+    ? toWechatReceiverContact(order.recipient && order.recipient.contact)
+    : ''
+  if (!isPickup && shippingCarrierRequiresContact(delivery.deliveryId) && !contact) {
+    throw httpError('顺丰订单缺少可掩码的手机号，无法同步', 409)
+  }
+  if (typeof upload !== 'function') throw httpError('微信同步通道未装配', 503)
+
+  let wechat
+  try {
+    wechat = toShippingStatus(await upload({
+      transactionId,
+      openid,
+      itemDesc,
+      uploadTime: now,
+      method: isPickup ? 'PICKUP' : 'DELIVERY',
+      deliveryId: isPickup ? '' : delivery.deliveryId,
+      trackingNo: isPickup ? '' : trackingNo,
+      receiverContact: contact,
+    }))
+  } catch (error) {
+    wechat = { status: 'PENDING', code: 0, reason: 'UPLOAD_THREW' }
+    console.error('[legacy-shipping] RESYNC_FAILED', orderNo, error && error.message ? error.message : error)
+  }
+  await db.collection('orders').doc(order._id).update({
+    wechatShippingStatus: wechat.status,
+    wechatShippingCode: wechat.status === 'SYNCED' ? '' : String(wechat.code || ''),
+    ...(wechat.status === 'SYNCED' ? { wechatShippingAt: db.serverDate() } : {}),
+  })
+  return { ok: true, already: false, wechat }
+}
+
 export async function shipLegacyArchiveOrder({ payNo, carrierCode, trackingNo, prisma, cloudbase, upload, now = Date.now() }) {
   const orderNo = requireText(payNo, '订单号', 40)
   const carrier = requireText(carrierCode, '快递公司', 20)
