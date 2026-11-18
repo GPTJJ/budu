@@ -28,6 +28,15 @@ import { normalizeCouponTemplate, newCouponTemplateId, serializeCouponTemplate }
 export const ONLINE_CATALOG_NAMESPACE = 'cloudbase-miniprogram'
 export const ONLINE_CATALOG_STATUSES = ['DRAFT', 'ON', 'OFF']
 
+const COUPON_SOURCE_LABELS_HINT = {
+  newcomer: '新人券',
+  campaign: '活动券',
+  repurchase: '首单复购券',
+  share: '分享券',
+  'repurchase-code': '复购码券',
+  manual: '后台手动发放',
+}
+
 const wrap = (handler) => async (req, res) => {
   try {
     await handler(req, res)
@@ -1187,6 +1196,95 @@ onlineCatalogRouter.post('/online-catalog/banners/publish', wrap(async (req, res
 // ---- 小程序券模板 ----
 // 券的权威在 CloudBase `coupon_templates`：小程序 `coupon` 云函数直接读它，
 // 因此这里「保存即生效」，没有发布步骤。已发出的券是领取时的快照，改模板不影响它们。
+// 券效果报表：按模板统计「本期领取 / 已用 / 过期 / 未用 / 核销率」。
+// 口径：本期 = 领取时间落在范围内的券（同期群），之后再变状态仍归属本期。
+onlineCatalogRouter.get('/online-catalog/coupon-report', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireConsole(req.user, 'marketing')
+  const days = integer(req.query.days, '统计天数', { min: 7, max: 365, fallback: 30 })
+  const since = Date.now() - days * 24 * 60 * 60 * 1000
+
+  const app = await getCloudBaseClient()
+  if (!app) throw httpError('CloudBase 未配置', 503)
+  const db = app.database({ throwOnNotFound: false })
+
+  const templateRows = (await db.collection('coupon_templates').limit(200).get()).data || []
+  const templates = new Map(templateRows.map((row) => [String(row._id), row]))
+
+  const coupons = []
+  let skip = 0
+  let truncated = false
+  while (true) {
+    const page = (await db.collection('user_coupons').skip(skip).limit(100).get()).data || []
+    coupons.push(...page)
+    if (page.length < 100) break
+    skip += 100
+    if (skip >= 5000) { truncated = true; break }
+  }
+
+  const stamp = (value) => {
+    if (typeof value === 'number') return value
+    const ms = new Date(value).getTime()
+    return Number.isFinite(ms) ? ms : 0
+  }
+
+  const buckets = new Map()
+  const bucketOf = (templateId) => {
+    if (!buckets.has(templateId)) {
+      buckets.set(templateId, { templateId, received: 0, used: 0, expired: 0, locked: 0, unused: 0, usedCents: 0 })
+    }
+    return buckets.get(templateId)
+  }
+
+  let cohort = 0
+  for (const coupon of coupons) {
+    if (stamp(coupon.receiveTime) < since) continue
+    cohort += 1
+    const bucket = bucketOf(String(coupon.templateId || ''))
+    bucket.received += 1
+    const status = String(coupon.status || '')
+    if (status === 'used') { bucket.used += 1; bucket.usedCents += Number(coupon.discountCent) || 0 }
+    else if (status === 'expired') bucket.expired += 1
+    else if (status === 'locked') bucket.locked += 1
+    else bucket.unused += 1
+  }
+
+  const rows = [...buckets.values()].map((bucket) => {
+    const template = templates.get(bucket.templateId) || {}
+    return {
+      templateId: bucket.templateId,
+      name: String(template.name || '(已删除模板)'),
+      source: String(template.source || ''),
+      sourceLabel: COUPON_SOURCE_LABELS_HINT[String(template.source || '')] || String(template.source || '—'),
+      faceCent: Number(template.faceCent) || 0,
+      thresholdCent: Number(template.thresholdCent) || 0,
+      status: String(template.status || ''),
+      validDays: Number(template.validDays) || 0,
+      totalQty: template.totalQty == null ? null : Number(template.totalQty),
+      issuedQty: Number(template.issuedQty) || 0,
+      received: bucket.received,
+      used: bucket.used,
+      expired: bucket.expired,
+      locked: bucket.locked,
+      unused: bucket.unused,
+      usedCents: bucket.usedCents,
+      redeemRate: bucket.received ? Math.round((bucket.used / bucket.received) * 1000) / 10 : 0,
+    }
+  }).sort((a, b) => b.received - a.received || b.usedCents - a.usedCents)
+
+  const totals = rows.reduce((sum, row) => ({
+    received: sum.received + row.received,
+    used: sum.used + row.used,
+    expired: sum.expired + row.expired,
+    locked: sum.locked + row.locked,
+    unused: sum.unused + row.unused,
+    usedCents: sum.usedCents + row.usedCents,
+  }), { received: 0, used: 0, expired: 0, locked: 0, unused: 0, usedCents: 0 })
+  totals.redeemRate = totals.received ? Math.round((totals.used / totals.received) * 1000) / 10 : 0
+
+  res.json({ ok: true, days, since: new Date(since).toISOString(), cohort, truncated, rows, totals })
+}))
+
 onlineCatalogRouter.get('/online-catalog/coupon-templates', wrap(async (req, res) => {
   requireConsole(req.user, 'marketing')
   const publisher = await getOnlineCatalogPublisher()

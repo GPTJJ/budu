@@ -83,6 +83,52 @@ export default function CouponBoard() {
     return { total: rows.length, on: on.length, issued }
   }, [rows])
 
+  const [report, setReport] = useState(null)
+  const [reportDays, setReportDays] = useState(30)
+  const [reportLoading, setReportLoading] = useState(false)
+
+  const loadReport = useCallback(async (days) => {
+    setReportLoading(true)
+    try {
+      const res = await api(`/v2/online-catalog/coupon-report?days=${days}`)
+      setReport(res)
+    } catch (err) {
+      setError(err.message || '券效果报表加载失败')
+    } finally {
+      setReportLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadReport(reportDays) }, [loadReport, reportDays])
+
+  const exportReport = () => {
+    if (!report || !report.rows || !report.rows.length) return
+    const esc = (value) => `"${String(value == null ? '' : value).replace(/"/g, '""')}"`
+    const header = ['模板', '渠道', '面额(元)', '门槛(元)', '本期领取', '已用', '过期', '未用', '核销率(%)', '核销金额(元)', '累计已发', '发放总量']
+    const lines = [header, ...report.rows.map((row) => [
+      row.name,
+      row.sourceLabel,
+      (row.faceCent / 100).toFixed(2),
+      (row.thresholdCent / 100).toFixed(2),
+      row.received,
+      row.used,
+      row.expired,
+      row.unused + row.locked,
+      row.redeemRate,
+      (row.usedCents / 100).toFixed(2),
+      row.issuedQty,
+      row.totalQty == null ? '不限' : row.totalQty,
+    ])].map((row) => row.map(esc).join(','))
+    const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const stamp = new Date().toISOString().slice(0, 10)
+    link.href = url
+    link.download = `券效果_近${reportDays}天_${stamp}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   const startCreate = () => {
     setForm(EMPTY_FORM)
     setError('')
@@ -200,7 +246,87 @@ export default function CouponBoard() {
         ))}
       </div>
 
-      {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">{error}</div> : null}
+      <div className="rounded-xl border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
+          <div>
+            <div className="text-sm font-semibold text-slate-800">券效果</div>
+            <div className="text-[11px] text-slate-400">
+              按领取时间统计（近 {reportDays} 天领取的券，后续状态变化仍计入本期）
+              {report && report.cohort != null ? ` · 本期 ${report.cohort} 张` : ''}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {[7, 30, 90].map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setReportDays(days)}
+                className={`h-7 rounded-lg border px-2 text-[11px] ${reportDays === days ? 'border-budu-200 bg-budu-50 font-medium text-budu-700' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+              >
+                近 {days} 天
+              </button>
+            ))}
+            <button type="button" onClick={() => loadReport(reportDays)} disabled={reportLoading} className="h-7 rounded-lg border border-slate-200 px-2 text-[11px] text-slate-600 disabled:opacity-50">
+              {reportLoading ? '刷新中…' : '刷新'}
+            </button>
+            <button type="button" onClick={exportReport} disabled={!report || !report.rows || !report.rows.length} className="h-7 rounded-lg bg-slate-800 px-2 text-[11px] font-medium text-white disabled:opacity-40">
+              导出 CSV
+            </button>
+          </div>
+        </div>
+
+        {reportLoading && !report ? (
+          <div className="px-4 py-8 text-center text-xs text-slate-400">统计中…</div>
+        ) : !report || !report.rows || !report.rows.length ? (
+          <div className="px-4 py-8 text-center text-xs text-slate-400">该时间段还没有领取记录</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-xs">
+              <thead className="bg-slate-50 text-[11px] text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">模板</th>
+                  <th className="px-2 py-2 text-left font-medium">渠道</th>
+                  <th className="px-2 py-2 text-right font-medium">面额</th>
+                  <th className="px-2 py-2 text-right font-medium">领取</th>
+                  <th className="px-2 py-2 text-right font-medium">已用</th>
+                  <th className="px-2 py-2 text-right font-medium">过期</th>
+                  <th className="px-2 py-2 text-right font-medium">未用</th>
+                  <th className="px-2 py-2 text-right font-medium">核销率</th>
+                  <th className="px-3 py-2 text-right font-medium">核销金额</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.rows.map((row) => (
+                  <tr key={row.templateId || row.name} className="border-t border-slate-50">
+                    <td className="max-w-[220px] truncate px-3 py-2 text-slate-700">{row.name}</td>
+                    <td className="px-2 py-2 text-slate-500">{row.sourceLabel}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-slate-600">¥{yuan(row.faceCent)}{row.thresholdCent ? ` / 满${yuan(row.thresholdCent)}` : ''}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{row.received}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-emerald-600">{row.used}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-slate-400">{row.expired}</td>
+                    <td className="px-2 py-2 text-right tabular-nums text-slate-500">{row.unused + row.locked}</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{row.redeemRate}%</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-700">¥{yuan(row.usedCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-slate-50/70 text-[11px] font-medium text-slate-600">
+                <tr>
+                  <td className="px-3 py-2" colSpan={3}>合计</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{report.totals.received}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{report.totals.used}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{report.totals.expired}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{report.totals.unused + report.totals.locked}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{report.totals.redeemRate}%</td>
+                  <td className="px-3 py-2 text-right tabular-nums">¥{yuan(report.totals.usedCents)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+
+            {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">{error}</div> : null}
       {notice ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{notice}</div> : null}
 
       {loading ? (
