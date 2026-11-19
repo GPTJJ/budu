@@ -18,6 +18,7 @@ import AfterSalesBoard from './AfterSalesBoard'
 import AnalyticsBoard from './AnalyticsBoard'
 import BannerBoard from './BannerBoard'
 import CouponBoard from './CouponBoard'
+import BuyGiftBoard from './BuyGiftBoard'
 import CategoryBoard from './CategoryBoard'
 import ComboBoard from './ComboBoard'
 import ProductPerformanceBoard from './ProductPerformanceBoard'
@@ -91,10 +92,11 @@ const MODULES = [
     key: 'marketing',
     label: '营销',
     icon: Megaphone,
-    desc: '首页轮播与优惠券：改图改文案、配券面额与时效',
+    desc: '首页轮播、优惠券与买赠：改图改文案、配券、配买赠档位',
     views: [
       { key: 'marketing-banner', label: '首页轮播' },
       { key: 'marketing-coupon', label: '优惠券' },
+      { key: 'marketing-buy-gift', label: '买赠活动' },
     ],
   },
   {
@@ -349,6 +351,7 @@ export default function MiniProgramPage({ initialModule = 'overview' }) {
     if (viewKey === 'data-product') return <ProductPerformanceBoard />
     if (viewKey === 'marketing-banner') return <BannerBoard key={viewKey} />
     if (viewKey === 'marketing-coupon') return <CouponBoard key={viewKey} />
+    if (viewKey === 'marketing-buy-gift') return <BuyGiftBoard key={viewKey} />
     if (viewKey === 'settings-release') return <PublishRecordBoard onGo={go} />
     if (viewKey === 'settings-access' && access.canManageAccess) return <AccessBoard />
     if (access.modules[module.key] !== true) {

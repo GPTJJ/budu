@@ -1196,6 +1196,107 @@ onlineCatalogRouter.post('/online-catalog/banners/publish', wrap(async (req, res
 // ---- 小程序券模板 ----
 // 券的权威在 CloudBase `coupon_templates`：小程序 `coupon` 云函数直接读它，
 // 因此这里「保存即生效」，没有发布步骤。已发出的券是领取时的快照，改模板不影响它们。
+// 买赠活动配置：写 CloudBase promotions/buy_gift，云函数下单时读同一份文档，保存即生效。
+const BUY_GIFT_DOC = 'buy_gift'
+function buyGiftDefaults() {
+  return {
+    active: false,
+    triggerType: 'category',
+    triggerCategory: '生巧克力',
+    triggerProductIds: [],
+    tiers: [],
+    startAt: null,
+    endAt: null,
+  }
+}
+function normalizeBuyGift(input, products) {
+  const source = input && typeof input === 'object' ? input : {}
+  const byId = new Map(products.map((p) => [String(p.id), p]))
+  const triggerType = source.triggerType === 'products' ? 'products' : 'category'
+  const triggerCategory = String(source.triggerCategory || '').trim()
+  const triggerProductIds = Array.isArray(source.triggerProductIds)
+    ? [...new Set(source.triggerProductIds.map((x) => String(x)).filter((id) => byId.has(id)))]
+    : []
+  if (triggerType === 'category' && !triggerCategory) throw httpError('请选择触发分类', 400)
+  if (triggerType === 'products' && !triggerProductIds.length) throw httpError('请至少选择一个触发商品', 400)
+
+  const tiers = (Array.isArray(source.tiers) ? source.tiers : []).map((tier, index) => {
+    const minQty = Number(tier && tier.minQty)
+    const giftQty = Number(tier && tier.giftQty) || 1
+    const giftProductId = String((tier && tier.giftProductId) || '')
+    const label = String((tier && tier.label) || '').trim()
+    if (!Number.isInteger(minQty) || minQty < 1 || minQty > 99) throw httpError(`第 ${index + 1} 档：满件数需为 1–99 的整数`, 400)
+    if (!Number.isInteger(giftQty) || giftQty < 1 || giftQty > 10) throw httpError(`第 ${index + 1} 档：赠品数量需为 1–10`, 400)
+    const gift = byId.get(giftProductId)
+    if (!gift) throw httpError(`第 ${index + 1} 档：赠品不存在`, 400)
+    if (String(gift.status || '') === 'off') throw httpError(`第 ${index + 1} 档：赠品已下架`, 400)
+    if (label.length > 30) throw httpError(`第 ${index + 1} 档：文案不超过 30 字`, 400)
+    return { minQty, giftProductId, giftQty, label }
+  })
+  if (!tiers.length) throw httpError('至少配置一个档位', 400)
+  tiers.sort((a, b) => a.minQty - b.minQty)
+  if (new Set(tiers.map((t) => t.minQty)).size !== tiers.length) throw httpError('档位件数不能重复', 400)
+
+  const startAt = source.startAt == null || source.startAt === '' ? null : Number(source.startAt)
+  const endAt = source.endAt == null || source.endAt === '' ? null : Number(source.endAt)
+  if (startAt != null && !Number.isFinite(startAt)) throw httpError('开始时间无效', 400)
+  if (endAt != null && !Number.isFinite(endAt)) throw httpError('结束时间无效', 400)
+  if (startAt != null && endAt != null && endAt <= startAt) throw httpError('结束时间必须晚于开始时间', 400)
+
+  return {
+    active: !!source.active,
+    triggerType,
+    triggerCategory: triggerType === 'category' ? triggerCategory : '',
+    triggerProductIds: triggerType === 'products' ? triggerProductIds : [],
+    tiers,
+    startAt,
+    endAt,
+  }
+}
+
+onlineCatalogRouter.get('/online-catalog/buy-gift', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireConsole(req.user, 'marketing')
+  const app = await getCloudBaseClient()
+  if (!app) throw httpError('CloudBase 未配置', 503)
+  const db = app.database({ throwOnNotFound: false })
+  const doc = await db.collection('promotions').doc(BUY_GIFT_DOC).get().catch(() => null)
+  const saved = doc && (Array.isArray(doc.data) ? doc.data[0] : doc.data)
+  const rows = (await db.collection('products').limit(200).get()).data || []
+  const products = rows.map((row) => ({
+    id: String(row._id),
+    name: String(row.name || ''),
+    category: String(row.category || ''),
+    status: String(row.status || ''),
+    priceCent: Number(row.priceCent) || null,
+  })).filter((row) => row.name)
+  const categories = [...new Set(products.map((p) => p.category).filter(Boolean))].sort()
+  res.json({
+    ok: true,
+    config: Object.assign(buyGiftDefaults(), saved || {}),
+    products,
+    categories,
+  })
+}))
+
+onlineCatalogRouter.put('/online-catalog/buy-gift', wrap(async (req, res) => {
+  if (!dbReady()) throw httpError('数据库未配置', 503)
+  requireConsole(req.user, 'marketing')
+  const app = await getCloudBaseClient()
+  if (!app) throw httpError('CloudBase 未配置', 503)
+  const db = app.database({ throwOnNotFound: false })
+  const rows = (await db.collection('products').limit(200).get()).data || []
+  const products = rows.map((row) => ({
+    id: String(row._id),
+    name: String(row.name || ''),
+    category: String(row.category || ''),
+    status: String(row.status || ''),
+  }))
+  const config = normalizeBuyGift(req.body, products)
+  await db.collection('promotions').doc(BUY_GIFT_DOC).set(Object.assign({}, config, { updatedAt: Date.now(), updatedBy: String(req.user && req.user.username || '') }))
+  res.json({ ok: true, config })
+}))
+
 // 券效果报表：按模板统计「本期领取 / 已用 / 过期 / 未用 / 核销率」。
 // 口径：本期 = 领取时间落在范围内的券（同期群），之后再变状态仍归属本期。
 onlineCatalogRouter.get('/online-catalog/coupon-report', wrap(async (req, res) => {
