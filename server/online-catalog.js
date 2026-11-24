@@ -13,6 +13,7 @@ import { Router } from 'express'
 import { Prisma } from '@prisma/client'
 import { prisma, dbReady } from './pg.js'
 import { httpError, parseCents } from './pos-core.js'
+import { isV2BuyGiftDoc, buyGiftWriteDecision, buyGiftV2Summary, BUY_GIFT_V2_READ_ONLY_REASON } from './buy-gift-guard.js'
 import { hasModuleAccess, isSuperUser, MODULE_KEYS, MP_CONSOLE_MODULE_KEYS, canManageMpConsoleAccess, hasMpConsoleAccess, mpConsoleModulesOf, normalizeAccountPermissions } from '../shared/accountPermissions.js'
 import { getOnlineCatalogPublisher, buildProductDoc, checksum } from './online-catalog-publisher.js'
 import { enumerateOnlineSkus } from './online-catalog-coverage.js'
@@ -1276,6 +1277,11 @@ onlineCatalogRouter.get('/online-catalog/buy-gift', wrap(async (req, res) => {
     config: Object.assign(buyGiftDefaults(), saved || {}),
     products,
     categories,
+    // v2 文档对旧面板只读：不回填成可编辑的 v1 表单，避免误保存整份覆盖 rules[]
+    readOnly: isV2BuyGiftDoc(saved),
+    ruleVersion: isV2BuyGiftDoc(saved) ? 2 : 1,
+    readOnlyReason: isV2BuyGiftDoc(saved) ? BUY_GIFT_V2_READ_ONLY_REASON : '',
+    v2: buyGiftV2Summary(saved),
   })
 }))
 
@@ -1293,6 +1299,18 @@ onlineCatalogRouter.put('/online-catalog/buy-gift', wrap(async (req, res) => {
     status: String(row.status || ''),
   }))
   const config = normalizeBuyGift(req.body, products)
+  // 写前重读（尽量靠近写入点，缩短与并发 v2 写入的窗口）：
+  //  - 读到 v2（rules[]）→ 409 拒绝，绝不用 v1 结构整份覆盖；
+  //  - 读取失败 → 503 中止，无法判断是否覆盖 v2 时必须 fail-closed。
+  let existing = null
+  try {
+    const current = await db.collection('promotions').doc(BUY_GIFT_DOC).get()
+    existing = current && (Array.isArray(current.data) ? current.data[0] : current.data)
+  } catch (err) {
+    throw httpError('无法确认现有买赠规则，已中止保存（未写入任何内容），请稍后重试', 503)
+  }
+  const decision = buyGiftWriteDecision(existing)
+  if (!decision.allow) throw httpError(decision.message, decision.status)
   await db.collection('promotions').doc(BUY_GIFT_DOC).set(Object.assign({}, config, { updatedAt: Date.now(), updatedBy: String(req.user && req.user.username || '') }))
   res.json({ ok: true, config })
 }))

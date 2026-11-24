@@ -12,6 +12,10 @@ import { api } from '../utils/api'
  *  - 触发按分类累计件数，或按指定商品累计；
  *  - 每单只触发满足条件的最高档一次，不按倍数叠加；
  *  - 赠品以 0 元行进入订单，参与发货/退款，不折现。
+ *
+ * v2 只读保护（2026-11-24）：线上文档若已是小程序 v2 结构（rules[]），本面板只读。
+ * 旧表单保存是整文档覆盖，会把 rules[] 冲掉并静默退回「单分类 + 最高档」，
+ * 小程序侧已移除自愈升级，覆盖后没有任何兜底。服务端 PUT 同样写前重读并 409 拒绝。
  */
 
 const inputClass = 'w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-budu-400'
@@ -58,6 +62,9 @@ export default function BuyGiftBoard() {
     startAt: '',
     endAt: '',
   })
+  const [readOnly, setReadOnly] = useState(false)
+  const [readOnlyReason, setReadOnlyReason] = useState('')
+  const [v2, setV2] = useState(null)
   const [productFilter, setProductFilter] = useState('')
 
   const load = useCallback(async () => {
@@ -68,6 +75,10 @@ export default function BuyGiftBoard() {
       const config = res?.config || {}
       setProducts(Array.isArray(res?.products) ? res.products : [])
       setCategories(Array.isArray(res?.categories) ? res.categories : [])
+      // 线上为 v2（rules[]）时服务端会回 readOnly：只展示摘要，不把 v2 回填进 v1 表单
+      setReadOnly(!!res?.readOnly)
+      setReadOnlyReason(res?.readOnlyReason || '')
+      setV2(res?.v2 || null)
       setForm({
         active: !!config.active,
         triggerType: config.triggerType === 'products' ? 'products' : 'category',
@@ -130,6 +141,10 @@ export default function BuyGiftBoard() {
   }
 
   const save = async () => {
+    if (readOnly) {
+      setError(readOnlyReason || '当前为 v2 规则，面板只读，不能保存')
+      return
+    }
     if (saving) return
     setSaving(true)
     setError('')
@@ -172,16 +187,18 @@ export default function BuyGiftBoard() {
             <Gift className="h-4 w-4 text-budu-500" /> 买赠活动
           </h2>
           <p className="mt-1 text-xs text-slate-500">
-            买满指定件数自动送赠品，赠品 0 元进入订单。保存即生效，每单只触发最高档一次。
+            {readOnly
+              ? '检测到 v2 多品类规则，本页仅展示摘要，不可编辑、不会写入。'
+              : '买满指定件数自动送赠品，赠品 0 元进入订单。保存即生效，每单只触发最高档一次。'}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-2 text-xs text-slate-600">
-            <input type="checkbox" checked={form.active} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
+            <input type="checkbox" checked={form.active} disabled={readOnly} onChange={(e) => setForm({ ...form, active: e.target.checked })} />
             启用活动
           </label>
-          <button type="button" onClick={save} disabled={saving || loading} className="rounded-xl bg-budu-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-            {saving ? '保存中…' : '保存'}
+          <button type="button" onClick={save} disabled={saving || loading || readOnly} className="rounded-xl bg-budu-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+            {readOnly ? '只读' : saving ? '保存中…' : '保存'}
           </button>
         </div>
       </div>
@@ -191,6 +208,33 @@ export default function BuyGiftBoard() {
 
       {loading ? (
         <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-400">加载中…</div>
+      ) : readOnly ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="text-sm font-semibold text-amber-800">当前为 v2 多品类买赠规则，本面板只读</div>
+            <p className="mt-1 text-xs leading-5 text-amber-700">{readOnlyReason}</p>
+          </div>
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600">
+            <div>
+              状态：{v2?.active ? '启用中' : '已停用'}　规则条数：{v2?.rules?.length || 0}
+            </div>
+            <div>
+              时间窗：{v2?.startAt ? toLocalInput(v2.startAt).replace('T', ' ') : '立即'}
+              {' ～ '}{v2?.endAt ? toLocalInput(v2.endAt).replace('T', ' ') : '长期'}
+            </div>
+            {(v2?.rules || []).map((rule, index) => (
+              <div key={rule.id || index} className="rounded-lg bg-slate-50 px-3 py-2">
+                <span className="font-medium text-slate-700">{rule.label || rule.id || `规则 ${index + 1}`}</span>
+                <span className="ml-2 text-slate-400">
+                  {Array.isArray(rule.category) ? rule.category.join(' / ') : rule.category} · {rule.mode}
+                </span>
+              </div>
+            ))}
+            <div className="text-[11px] text-slate-400">
+              需要调档位、改赠品或停用活动，请使用新版 v2 规则配置；本页不会写入任何内容。
+            </div>
+          </div>
+        </div>
       ) : (
         <>
           <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
