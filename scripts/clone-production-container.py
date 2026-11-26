@@ -42,6 +42,29 @@ for item in source["Config"].get("Env") or []:
     key, separator, value = item.partition("=")
     if separator:
         env[key] = value
+
+# 发布期可选的环境覆盖（例如显式声明 WECHAT_URLLINK_ENV_VERSION=release）。
+# 只接受字符串键值，且禁止触碰数据源与身份密钥，避免借发布通道改写运行时权威。
+_EXTRA_ENV_FORBIDDEN = {"DATABASE_URL", "JWT_SECRET", "GIT_SHA"}
+extra_env_raw = os.environ.get("EXTRA_ENV_JSON", "").strip()
+if extra_env_raw:
+    try:
+        extra_env = json.loads(extra_env_raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"EXTRA_ENV_INVALID_JSON_{exc.msg}") from None
+    if not isinstance(extra_env, dict):
+        raise SystemExit("EXTRA_ENV_NOT_OBJECT")
+    for key, value in extra_env.items():
+        if not isinstance(key, str) or not key:
+            raise SystemExit("EXTRA_ENV_KEY_INVALID")
+        if not isinstance(value, str):
+            raise SystemExit(f"EXTRA_ENV_VALUE_INVALID_{key}")
+        if "\n" in value or "\r" in value:
+            raise SystemExit(f"EXTRA_ENV_VALUE_LINE_BREAK_{key}")
+        if key in _EXTRA_ENV_FORBIDDEN:
+            raise SystemExit(f"EXTRA_ENV_FORBIDDEN_KEY_{key}")
+        env[key] = value
+
 env["GIT_SHA"] = release_sha
 env["CUSTOMER_REQUEST_WECOM_RECIPIENT_USERNAME"] = username
 env["CUSTOMER_REQUEST_WECOM_RECIPIENT_USER_ID"] = user_id
