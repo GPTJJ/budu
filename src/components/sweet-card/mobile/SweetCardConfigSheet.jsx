@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Check, Lock, Search, ShieldCheck } from 'lucide-react'
 import { api } from '../../../utils/api'
+import { buildAuditEntries, buildCardTailIndex } from '../../../utils/sweetCardAudit'
 
 const SEGMENTS = [['stores', '可用门店'], ['rules', '核销规则'], ['audit', '操作审计']]
 const fieldClass = 'w-full rounded-2xl border border-slate-200 bg-white px-3.5 py-2.5 text-[14px] outline-none placeholder:text-slate-300 focus:border-budu-300 focus:ring-2 focus:ring-budu-100'
@@ -15,11 +16,15 @@ function Segmented({ value, onChange }) {
   )
 }
 
-export default function SweetCardConfigSheet({ open, onClose, initialSegment = 'stores', rules, audit, onSaveRules, onReload, saving }) {
+export default function SweetCardConfigSheet({ open, onClose, initialSegment = 'stores', rules, audit, cards, onSaveRules, onReload, saving }) {
   const [segment, setSegment] = useState(initialSegment)
   const [search, setSearch] = useState('')
   const [blocked, setBlocked] = useState([])
   const [availability, setAvailability] = useState(null)
+  // 审计列表只做展示层翻译：事件码 → 中文动作、UUID → 业务身份、制卡多事件合并。
+  const auditEntries = useMemo(() => buildAuditEntries(audit || [], {
+    cardTailIndex: buildCardTailIndex(cards || []),
+  }).slice(0, 60), [audit, cards])
   const [availabilityError, setAvailabilityError] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -147,13 +152,19 @@ export default function SweetCardConfigSheet({ open, onClose, initialSegment = '
         </section>}
 
         {segment === 'audit' && <section aria-label="操作审计" className="rounded-3xl bg-white p-4 ring-1 ring-slate-100">
-          {(audit || []).length === 0 && <p className="py-8 text-center text-[12px] text-slate-400">暂无审计记录</p>}
+          {auditEntries.length === 0 && <p className="py-8 text-center text-[12px] text-slate-400">暂无审计记录</p>}
           <ol className="relative ml-1.5 border-l border-slate-100">
-            {(audit || []).slice(0, 60).map((event) => (
-              <li key={event.id} className="relative pb-4 pl-4 last:pb-0">
+            {auditEntries.map((entry) => (
+              <li key={entry.id} className="relative pb-4 pl-4 last:pb-0">
                 <span className="absolute -left-[3.5px] top-1.5 h-1.5 w-1.5 rounded-full bg-budu-400 ring-2 ring-white" aria-hidden="true" />
-                <p className="text-[13px] font-black text-slate-800">{event.action}</p>
-                <p className="mt-0.5 text-[11px] text-slate-400">{event.actorName || event.actorId || 'system'} · {new Date(event.createdAt).toLocaleString()}</p>
+                <p className="flex flex-wrap items-baseline gap-x-1.5 text-[13px] font-black text-slate-800">
+                  <span>{entry.label}</span>
+                  {entry.summary && <span className="text-[11px] font-bold text-slate-400">{entry.summary}</span>}
+                </p>
+                <p className="mt-0.5 text-[11px] text-slate-400">
+                  {entry.actor.text} · {new Date(entry.at).toLocaleString()}
+                  {entry.mergedCount > 1 && <span className="text-slate-300"> · 合并 {entry.mergedCount} 条底层记录</span>}
+                </p>
               </li>
             ))}
           </ol>

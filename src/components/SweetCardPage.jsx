@@ -269,6 +269,7 @@ export default function SweetCardPage({ user, onBack }) {
         onClose={() => setConfigOpen(false)}
         rules={rules}
         audit={audit}
+        cards={cards}
         saving={saving}
         onSaveRules={saveRules}
         onReload={load}
