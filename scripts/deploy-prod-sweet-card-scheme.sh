@@ -127,12 +127,22 @@ count_writers() {
 assert_route_mounted() {
   local container="$1"
   local code
+  # 只能在 writer（active）阶段跑：standby 会在 /api 前置拦截所有写请求并返回
+  # 503 BUDU_RUNTIME_STANDBY，那样探测到的是常量而非路由是否挂载。
   code="$(docker exec "$container" sh -c "wget -q -S -O /dev/null --header='Content-Type: application/json' --post-data='{}' http://127.0.0.1:3000/api/v2/sweet-cards/cards/route-probe/claim-url-link 2>&1 | sed -n 's@^  HTTP/[0-9.]* \\([0-9]*\\).*@\\1@p' | head -1")"
   case "$code" in
     400|401|403) echo "claim-url-link route mounted (${code})" ;;
     404|"") echo "CLAIM_URL_LINK_ROUTE_MISSING (status=${code})" >&2; return 1 ;;
+    503) echo "CLAIM_URL_LINK_ROUTE_PROBED_ON_STANDBY (${code})" >&2; return 1 ;;
     *) echo "CLAIM_URL_LINK_ROUTE_UNEXPECTED (status=${code})" >&2; return 1 ;;
   esac
+}
+
+assert_home_served() {
+  local container="$1" code
+  code="$(docker exec "$container" sh -c "wget -q -S -O /dev/null http://127.0.0.1:3000/ 2>&1 | sed -n 's@^  HTTP/[0-9.]* \\([0-9]*\\).*@\\1@p' | head -1")"
+  [ "$code" = "200" ] || { echo "HOME_NOT_SERVED (status=${code})" >&2; return 1; }
+  echo "home page served (200)"
 }
 
 assert_release_assets() {
@@ -240,8 +250,8 @@ EXTRA_ENV_JSON="$EXTRA_ENV_JSON" python3 "${RELEASE_ROOT}/scripts/clone-producti
   "$OLD_CONTAINER" "$READONLY" "$IMAGE" "$RELEASE_SHA" "$BINDING_FILE" "$COMMON_NETWORK" disabled readonly
 require_health "$READONLY" "$RELEASE_SHA"
 verify_database "$READONLY" "$BASELINE_MIGRATIONS"
-assert_route_mounted "$READONLY"
 assert_release_assets "$READONLY"
+assert_home_served "$READONLY"
 [ "$(count_writers "$OLD_CONTAINER")" -eq 1 ]
 echo "unrouted readonly candidate smoke PASS"
 
@@ -281,6 +291,8 @@ require_health "$CANDIDATE" "$RELEASE_SHA"
 verify_database "$CANDIDATE" "$BASELINE_MIGRATIONS"
 [ "$(count_writers "$CANDIDATE")" -eq 1 ]
 assert_release_assets "$CANDIDATE"
+assert_home_served "$CANDIDATE"
+assert_route_mounted "$CANDIDATE"
 
 cp "${WORK_ROOT}/budu.conf.template.candidate" "$HOST_TEMPLATE"
 ROUTE_CHANGED=1
