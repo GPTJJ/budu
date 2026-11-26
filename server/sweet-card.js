@@ -1,4 +1,5 @@
 import { createOfficialClaimCode } from './sweet-card-wechat-code.js'
+import { createClaimShareLink } from './sweet-card-url-link.js'
 import crypto from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { Router } from 'express'
@@ -135,12 +136,14 @@ const serializeCard = (row, detail = false, viewer = null) => ({
   recipientType: row.recipientType, recipientLabel: row.recipientLabel, recipientCompany: row.recipientCompany,
   recipientNote: row.recipientNote, giftingScenario: row.giftingScenario, issuedByName: row.issuedByName,
   issuedAt: row.issuedAt, activatedAt: row.activatedAt, createdAt: row.createdAt,
+  claimedAt: row.claim?.claimedAt || null,
   binding: row.binding ? { memberId: row.binding.memberId, boundAt: row.binding.boundAt, verificationMethod: row.binding.verificationMethod } : null,
   credentials: (row.credentials || []).map((credential) => ({ id: credential.id, status: credential.status, carrierType: credential.carrierType, activatedAt: credential.activatedAt, revokedAt: credential.revokedAt })),
   ...(detail ? {
     batch: row.batch ? { name: row.batch.name, businessPurpose: row.batch.businessPurpose, presentationTemplateKey: row.batch.presentationTemplateKey } : null,
     delivery: {
       ...buildSweetCardDeliveryState(row),
+      activeClaimCredentialId: (row.claimTokens || []).find((token) => !token.revokedAt && !token.consumedAt && token.expiresAt > new Date())?.id || '',
       ...buildClaimAssetEligibility(row, {
         claimPresentationEnabled: sweetCardClaimPresentationEnabled(),
         canIssue: hasModuleAccess(viewer, MODULE_KEYS.SWEET_CARD) && hasSweetCardCapability(viewer, SWEET_CARD_CAPABILITIES.ISSUE),
@@ -334,15 +337,16 @@ sweetCardRouter.get('/sweet-cards/overview', wrap(async (req, res) => {
   const businessPurpose = reportPurpose(req.query.businessPurpose)
   const archived = archiveScope(req.query.archived)
   const where = accountOperationalWhere(businessPurpose, archived)
-  const [groups, sums, expired, issued] = await Promise.all([
+  const [groups, sums, expired, issued, claimed] = await Promise.all([
     prisma.sweetCardAccount.groupBy({ by: ['status'], where, _count: { _all: true } }),
     prisma.sweetCardAccount.aggregate({ where, _count: { _all: true }, _sum: { initialAmountCents: true, balanceCents: true } }),
     prisma.sweetCardAccount.count({ where: { ...where, status: 'ACTIVE', expiresAt: { lte: new Date() } } }),
     prisma.sweetCardAccount.count({ where: { ...where, issuedAt: { not: null } } }),
+    prisma.sweetCardClaim.count({ where: { account: where } }),
   ])
   const statusCounts = Object.fromEntries(groups.map((row) => [row.status, row._count._all]))
   statusCounts.ACTIVE = Math.max(0, (statusCounts.ACTIVE || 0) - expired); statusCounts.EXPIRED = (statusCounts.EXPIRED || 0) + expired
-  res.json({ businessPurpose, archived, statusCounts, count: sums._count._all, issued,
+  res.json({ businessPurpose, archived, statusCounts, count: sums._count._all, issued, claimed,
     initialAmountCents: String(sums._sum.initialAmountCents || 0), balanceCents: String(sums._sum.balanceCents || 0) })
 }))
 
@@ -370,7 +374,7 @@ sweetCardRouter.get('/sweet-cards/cards', wrap(async (req, res) => {
   const where = accountOperationalWhere(businessPurpose, archived)
   if (req.query.status) where.status = String(req.query.status)
   if (req.query.batchId) where.batchId = String(req.query.batchId)
-  const cards = await prisma.sweetCardAccount.findMany({ where, orderBy: { createdAt: 'desc' }, take: 300, include: { binding: true, credentials: true } })
+  const cards = await prisma.sweetCardAccount.findMany({ where, orderBy: { createdAt: 'desc' }, take: 300, include: { binding: true, credentials: true, claim: { select: { claimedAt: true } } } })
   res.json({ businessPurpose, archived, cards: cards.map((row) => serializeCard(row)) })
 }))
 
@@ -385,7 +389,7 @@ sweetCardRouter.get('/sweet-cards/cards/:id', wrap(async (req, res) => {
       claim: { select: { claimedAt: true } },
       claimTokens: {
         orderBy: { createdAt: 'desc' }, take: 1,
-        select: { expiresAt: true, revokedAt: true, consumedAt: true, createdAt: true },
+        select: { id: true, expiresAt: true, revokedAt: true, consumedAt: true, createdAt: true },
       },
       ledger: { orderBy: { createdAt: 'desc' } },
     },
@@ -732,6 +736,41 @@ sweetCardRouter.post('/sweet-cards/cards/:id/claim-presentation/revoke', wrap(as
     revokedCount: result.revokedCount, purpose: 'MINIPROGRAM_CLAIM', economicMutation: false,
   })
   res.json({ ok: true, claimAsset: { purpose: 'MINIPROGRAM_CLAIM', state: 'REVOKED' }, ...result })
+}))
+
+// 环境 B（外部浏览器 / PWA）转发：由服务端生成微信短链（wxmpurl.cn / wxaurl.cn），前端只拿到短链本身。
+sweetCardRouter.post('/sweet-cards/cards/:id/claim-url-link', wrap(async (req, res) => {
+  requireDb(); requireControlledClaimPresentation(req); requireAdmin(req, SWEET_CARD_CAPABILITIES.ISSUE); assertSweetCardEnabled()
+  const now = new Date()
+  const card = await prisma.sweetCardAccount.findUnique({
+    where: { id: req.params.id },
+    include: {
+      binding: true,
+      claim: { select: { claimedAt: true } },
+      claimTokens: { where: { revokedAt: null, consumedAt: null, expiresAt: { gt: now } }, orderBy: { createdAt: 'desc' }, take: 1 },
+    },
+  })
+  if (!card) throw httpError('甜意卡不存在', 404)
+  if (card.claim) throw httpError('这张甜意卡已被领取，无法再次转发', 409)
+  if (card.binding) throw httpError('这张卡已绑定客户，无法转发领取', 409)
+  const credential = card.claimTokens[0]
+  if (!credential) {
+    throw Object.assign(httpError('这张卡还没有可用的领取凭据，请先生成电子卡', 409), { publicCode: 'CLAIM_CREDENTIAL_REQUIRED' })
+  }
+  const link = await createClaimShareLink({ credentialId: credential.id })
+  await audit(prisma, who(req.user), 'sweet_card.claim_url_link_created', { accountId: card.id, credentialId: credential.id }, {
+    purpose: 'MINIPROGRAM_CLAIM', channel: link.channel, economicMutation: false,
+  })
+  res.json({
+    ok: true,
+    schemeUrl: link.schemeUrl,
+    urlLink: link.urlLink,
+    channel: link.channel,
+    credentialId: link.credentialId,
+    expireDays: link.expireDays,
+    envVersion: link.envVersion,
+    expiresAt: credential.expiresAt,
+  })
 }))
 
 sweetCardRouter.get('/sweet-cards/rules', wrap(async (req, res) => {
