@@ -216,6 +216,10 @@ path=pathlib.Path(os.environ['DB_ENV_FILE']); path.write_text(f'PGURI={uri}\nDAT
 PY
 
 # ---------- build ----------
+# clone-production-container.py 需要固定的 CustomerRequest 收件绑定，缺失会直接
+# FileNotFoundError 中止（克隆器不接受空绑定，也不允许在这里改变收件人）。
+printf '%s' '{"username":"budu","userId":"dh"}' > "$BINDING_FILE"
+chmod 600 "$BINDING_FILE"
 BRANCH_REF="$(git bundle list-heads "$BUNDLE_PATH" | head -1 | awk '{print $2}')"
 [ -n "$BRANCH_REF" ] || { echo "BUNDLE_REF_MISSING" >&2; exit 1; }
 git init -q "$RELEASE_ROOT"
