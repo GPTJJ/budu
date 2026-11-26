@@ -122,11 +122,24 @@ export async function requestClaimShareLink(cardId) {
     channel: result.channel || '',
     expiresAt: result.expiresAt || null,
     credentialId: result.credentialId || null,
+    envVersion: result.envVersion || '',
+    notice: result.notice || '',
+    noticeDetail: result.noticeDetail || '',
+    auditState: result.auditState || '',
   }
 }
 
 export function shareFailureMessage(error) {
   const code = String(error && (error.code || error.data?.code || error.message) || '')
+  const wechatErrcode = error && (error.data?.wechatErrcode || error.wechatErrcode)
+  // 微信明确拒绝（如 path 不被版本接受、额度用尽）时给出可排查的错误码，而不是笼统的 500。
+  if (/URL_SCHEME_REJECTED|URL_LINK_REJECTED/.test(code)) {
+    return wechatErrcode
+      ? `微信拒绝生成转发链接（错误码 ${wechatErrcode}），请稍后重试或改用小程序内转发`
+      : '微信拒绝生成转发链接，请稍后重试或改用小程序内转发'
+  }
+  if (/URL_SCHEME_TOKEN_UNAVAILABLE|URL_LINK_TOKEN_UNAVAILABLE/.test(code)) return '微信登录凭据获取失败，请稍后重试或改用小程序内转发'
+  if (/CLAIM_REFERENCE_INVALID/.test(code)) return '这张卡的领取凭据引用无效，请重新生成电子卡'
   if (/NOT_CONFIGURED|UNAVAILABLE|SERVER_ERROR|UPSTREAM_ERROR/.test(code)) return '微信链接服务当前不可用，请改用小程序内转发'
   if (/CLAIM_CREDENTIAL/.test(code)) return '这张卡还没有可用的领取凭据，请先生成电子卡'
   if (/URL_LINK_INVALID|URL_SCHEME_INVALID/.test(code)) return '微信链接生成结果不可用，请稍后重试'

@@ -61,6 +61,8 @@ const wrap = (handler) => async (req, res) => {
     res.status(status).json({
       error: status >= 500 && error.publicSafe !== true ? '服务器暂时无法处理，请稍后重试' : error.message || '服务器错误',
       ...(error.publicCode || error.code === 'STORE_CLOSED' ? { code: error.publicCode || error.code } : {}),
+      // 微信侧拒绝时带上原始 errcode（纯错误码，不含 token/secret），否则前端只能显示笼统文案。
+      ...(Number.isInteger(error.wechatErrcode) ? { wechatErrcode: error.wechatErrcode } : {}),
     })
   }
 }
@@ -753,23 +755,52 @@ sweetCardRouter.post('/sweet-cards/cards/:id/claim-url-link', wrap(async (req, r
   if (!card) throw httpError('甜意卡不存在', 404)
   if (card.claim) throw httpError('这张甜意卡已被领取，无法再次转发', 409)
   if (card.binding) throw httpError('这张卡已绑定客户，无法转发领取', 409)
-  const credential = card.claimTokens[0]
-  if (!credential) {
+  const claimToken = card.claimTokens[0]
+  if (!claimToken) {
     throw Object.assign(httpError('这张卡还没有可用的领取凭据，请先生成电子卡', 409), { publicCode: 'CLAIM_CREDENTIAL_REQUIRED' })
   }
-  const link = await createClaimShareLink({ credentialId: credential.id })
-  await audit(prisma, who(req.user), 'sweet_card.claim_url_link_created', { accountId: card.id, credentialId: credential.id }, {
-    purpose: 'MINIPROGRAM_CLAIM', channel: link.channel, economicMutation: false,
+  // 审计表的 credential_id 外键指向 SweetCardCredential，而 claimTokens 是 SweetCardClaimToken：
+  // 两者 id 空间不同，把 token id 当 credentialId 写会触发 P2003
+  // （sweet_card_audit_logs_credential_fkey），把已成功的转发打成 500。
+  const linkedCredential = await prisma.sweetCardCredential.findFirst({
+    where: { accountId: card.id, revokedAt: null },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
   })
+  const link = await createClaimShareLink({ credentialId: claimToken.id })
+  let auditState = 'RECORDED'
+  try {
+    await audit(prisma, who(req.user), 'sweet_card.claim_url_link_created', {
+      accountId: card.id, credentialId: linkedCredential?.id || null,
+    }, {
+      purpose: 'MINIPROGRAM_CLAIM', channel: link.channel, claimTokenId: claimToken.id, economicMutation: false,
+    })
+  } catch (error) {
+    // 微信侧链接已经生成（计次不可退），审计落库失败不能反手把成功结果变成 500；
+    // 留痕并在响应里标记，便于后续补记审计。
+    console.error('[sweet-card] claim_url_link audit failed', {
+      accountId: card.id, claimTokenId: claimToken.id, code: error?.code,
+    })
+    auditState = 'PENDING'
+  }
+  // 正式版尚未包含免密领取页时，release 链接会把好友送到旧落地页：显式提示，而不是假装成功。
+  const releasePagePending = link.envVersion === 'release'
+    && String(process.env.SWEET_CARD_CLAIM_RELEASE_READY || '').trim().toLowerCase() !== 'true'
   res.json({
     ok: true,
     schemeUrl: link.schemeUrl,
     urlLink: link.urlLink,
     channel: link.channel,
     credentialId: link.credentialId,
+    claimTokenId: claimToken.id,
     expireDays: link.expireDays,
     envVersion: link.envVersion,
-    expiresAt: credential.expiresAt,
+    expiresAt: claimToken.expiresAt,
+    auditState,
+    ...(releasePagePending ? {
+      notice: 'CLAIM_RELEASE_PAGE_PENDING',
+      noticeDetail: '小程序正式版还没更新到免密领取页，好友打开会看到旧版领取页',
+    } : {}),
   })
 }))
 

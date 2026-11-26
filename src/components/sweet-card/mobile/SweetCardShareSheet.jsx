@@ -17,13 +17,14 @@ export default function SweetCardShareSheet({ open, card, onClose, onPrepareCred
   const [error, setError] = useState('')
   const [link, setLink] = useState('')
   const [linkKind, setLinkKind] = useState('scheme')
+  const [notice, setNotice] = useState('')
   const [copied, setCopied] = useState(false)
   const inMiniProgram = isWechatMiniProgramWebview()
   const amountText = card ? formatCents(card.initialAmountCents) : ''
 
   const prepare = useCallback(async () => {
     if (!card) return
-    setStage('preparing'); setError(''); setCopied(false); setLink('')
+    setStage('preparing'); setError(''); setCopied(false); setLink(''); setNotice('')
     try {
       let credentialId = card.delivery?.activeClaimCredentialId || ''
       if (!credentialId && onPrepareCredential) credentialId = await onPrepareCredential(card)
@@ -46,6 +47,7 @@ export default function SweetCardShareSheet({ open, card, onClose, onPrepareCred
       const share = await requestClaimShareLink(card.id)
       setLink(share.link)
       setLinkKind(share.kind)
+      if (share.notice === 'CLAIM_RELEASE_PAGE_PENDING') setNotice(share.noticeDetail || '小程序正式版还没更新到免密领取页，好友打开会看到旧版领取页')
       setStage('browser-ready')
     } catch (e) {
       setStage('failed')
@@ -53,7 +55,7 @@ export default function SweetCardShareSheet({ open, card, onClose, onPrepareCred
     }
   }, [card, inMiniProgram, onClose, onPrepareCredential, amountText])
 
-  useEffect(() => { if (open) prepare(); else { setStage('idle'); setError(''); setLink(''); setCopied(false) } }, [open, prepare])
+  useEffect(() => { if (open) prepare(); else { setStage('idle'); setError(''); setLink(''); setNotice(''); setCopied(false) } }, [open, prepare])
 
   const copyAndOpen = async () => {
     const text = shareCopy(amountText, link)
@@ -105,6 +107,9 @@ export default function SweetCardShareSheet({ open, card, onClose, onPrepareCred
             <button type="button" onClick={copyAndOpen} className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#07C160] text-[15px] font-black text-white">
               <MessageCircle className="h-[18px] w-[18px]" />{copied ? '已复制 · 去微信粘贴' : '复制文案并打开微信'}
             </button>
+            {notice && (
+              <p className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-800">{notice}</p>
+            )}
             <p className="text-center text-[10px] leading-4 text-slate-400">
               {linkKind === 'scheme'
                 ? '链接 7 天内有效；在微信聊天框内点击「weixin://」链接可直接拉起小程序领取页。'
