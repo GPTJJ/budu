@@ -57,10 +57,13 @@ function rejectIdentityAuthority(body) {
   }
 }
 
-function validateCredential(rawToken, rawProof) {
+function validateCredential(rawToken, rawProof = '') {
   const token = String(rawToken || '').trim()
   const proof = String(rawProof || '').trim()
-  if ((!CLAIM_TOKEN_PATTERN.test(token) && !CLAIM_SCENE_PATTERN.test(token)) || !CLAIM_PROOF_PATTERN.test(proof)) {
+  if (!CLAIM_TOKEN_PATTERN.test(token) && !CLAIM_SCENE_PATTERN.test(token)) {
+    deny('CLAIM_CREDENTIAL_INVALID', 400)
+  }
+  if (proof && !CLAIM_PROOF_PATTERN.test(proof)) {
     deny('CLAIM_CREDENTIAL_INVALID', 400)
   }
   return { token, proof }
@@ -81,7 +84,7 @@ function validateRequestKey(value) {
 
 function assertClaimable(record, proof, now) {
   const account = record?.account
-  if (!record || record.proofHash !== sha256(proof) || !account
+  if (!record || (proof && record.proofHash !== sha256(proof)) || !account
       || !supportsSweetCardClaim(account.batch?.businessPurpose)
       || !CLAIMABLE_ACCOUNT_STATUSES.has(account.status)
       || !CLAIMABLE_CARRIERS.has(account.carrierType)
@@ -278,7 +281,7 @@ export async function resolveSweetCardClaimExperience({ rawToken, rawProof, user
     where: claimCredentialLookup(token),
     include: { account: { include: { batch: true, binding: true, claim: true } } },
   })
-  if (!record || record.proofHash !== sha256(proof) || !supportsSweetCardClaim(record.account?.batch?.businessPurpose)) {
+  if (!record || (proof && record.proofHash !== sha256(proof)) || !supportsSweetCardClaim(record.account?.batch?.businessPurpose)) {
     deny('CLAIM_CREDENTIAL_INVALID', 404)
   }
   const account = record.account
@@ -434,7 +437,7 @@ export async function claimSweetCard({
       where: claimCredentialLookup(token),
       include: { account: { include: { batch: true, binding: true, claim: true } } },
     })
-    if (!record || record.proofHash !== sha256(proof)) deny()
+    if (!record || (proof && record.proofHash !== sha256(proof))) deny()
     const account = record.account
     const keyedClaim = await tx.sweetCardClaim.findUnique({
       where: { userId_requestKeyHash: { userId, requestKeyHash: keyHash } },
