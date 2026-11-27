@@ -12,24 +12,47 @@
       import { createRoot } from 'react-dom/client'
       import HomeWorkspace from '/src/components/HomeWorkspace.jsx'
       import Header from '/src/components/Header.jsx'
+      import MobileBottomNav from '/src/components/MobileBottomNav.jsx'
       import { PublicModeProvider } from '/src/visibility.jsx'
       import { seedCachedDataForTest } from '/src/utils/userData.js'
       import '/src/index.css'
 
+      const storeDirectory = [
+        { key: 'tongying', name: '北京通盈中心店', district: '朝阳区 · 三里屯', active: true, statusHistory: [] },
+        { key: 'guanshe', name: '北京官舍店', district: '朝阳区 · 亮马桥', active: true, statusHistory: [] },
+        { key: 'chaowai', name: '北京朝外店', district: '朝阳区 · 朝外', active: false, statusHistory: [] },
+        { key: 'xidan', name: '北京西单店', district: '西城区 · 西单', active: true, statusHistory: [] },
+      ]
+
       const data = {
         entries: {
-          '2026-08|tongying|08-20': { inc: 12800, ord: 128, staff: ['测试员工'] },
-          '2026-08|guanshe|08-20': { inc: 6800, ord: 72, staff: ['测试员工'] },
-          '2026-08|chaowai|08-20': { inc: 5300, ord: 60, staff: ['测试员工'] },
+          '2026-08|tongying|08-20': { inc: 12800, ord: 128, dish: 186, dis: 320, rev: 13120, staff: ['测试员工'] },
+          '2026-08|guanshe|08-20': { inc: 6800, ord: 72, dish: 95, dis: 120, rev: 6920, staff: ['测试员工'] },
+          '2026-08|chaowai|08-20': { inc: 5300, ord: 60, dish: 80, dis: 80, rev: 5380, staff: ['测试员工'] },
+          '2026-11|tongying|11-20': { inc: 1800, ord: 20, dish: 30, dis: 0, rev: 1800, staff: ['测试员工'] },
+          '2026-11|guanshe|11-20': { inc: 1200, ord: 15, dish: 22, dis: 0, rev: 1200, staff: ['测试员工'] },
         },
         staff: [],
         removedStaff: [],
-        stores: [{ key: 'xidan', name: '北京西单店', district: '北京' }],
+        stores: storeDirectory,
+        storesAuthority: 'postgresql',
         schedules: {},
         products: [],
         inventoryRequests: [],
         inventory: [],
-        analysis: {},
+        analysis: {
+          daily: {
+            '2026-08': {
+              tongying: [{ d: '08-20', inc: 12800, ord: 128, dish: 186, dis: 320, rev: 13120 }],
+              guanshe: [{ d: '08-20', inc: 6800, ord: 72, dish: 95, dis: 120, rev: 6920 }],
+              chaowai: [{ d: '08-20', inc: 5300, ord: 60, dish: 80, dis: 80, rev: 5380 }],
+            },
+            '2026-11': {
+              tongying: [{ d: '11-20', inc: 1800, ord: 20, dish: 30, dis: 0, rev: 1800 }],
+              guanshe: [{ d: '11-20', inc: 1200, ord: 15, dish: 22, dis: 0, rev: 1200 }],
+            },
+          },
+        },
         productImages: {},
         bigBonuses: [],
         dailyPayAdjustments: [],
@@ -38,40 +61,58 @@
       }
       localStorage.setItem('budu-os-cloud-mirror-v1', JSON.stringify(data))
       seedCachedDataForTest(data)
-      const role = new URLSearchParams(location.search).get('role') || 'developer'
+      const params = new URLSearchParams(location.search)
+      const role = params.get('role') || 'developer'
+      const month = params.get('month') || '2026-08'
+      const day = params.get('day') || '08-20'
+      const autoLockMs = Number(params.get('autoLockMs')) || 30000
 
       const onNavigate = (view) => {
         document.documentElement.dataset.navigation = view
       }
 
+      const user = {
+        id: 'dev-1',
+        username: role === 'public' ? 'public' : 'developer',
+        role,
+        status: 'active',
+        storeKeys: role === 'store' ? ['tongying'] : [],
+      }
+
       createRoot(document.getElementById('root')).render(
-        React.createElement(PublicModeProvider, { isPublic: role === 'public', isStore: role === 'store' },
+        React.createElement(PublicModeProvider, { isPublic: role === 'public', isStore: role === 'store', autoLockMs },
           React.createElement(React.Fragment, null,
             React.createElement(Header, {
-              month: '2026-08',
+              month,
               store: 'all',
-              day: '08-20',
+              day,
               weekStart: null,
               showOverviewTools: true,
-              user: { id: 'dev-1', username: role === 'public' ? 'public' : 'developer', role, storeKeys: role === 'store' ? ['tongying'] : [] },
+              user,
               onDaySelect: () => {},
               onWeekSelect: () => {},
               onStoreChange: (store) => { document.documentElement.dataset.store = store },
               onNavigate,
               onRefresh: () => {},
-              onMenuClick: () => {},
+              onMenuClick: () => { document.documentElement.dataset.sidebar = 'open' },
             }),
-            React.createElement('main', { className: 'mx-auto w-full max-w-[720px] px-3 py-4' },
+            React.createElement('main', { className: 'mx-auto w-full max-w-[720px] px-3 py-4 pb-24' },
               React.createElement(HomeWorkspace, {
-                month: '2026-08',
+                month,
                 store: 'all',
-                day: '08-20',
+                day,
                 weekStart: null,
-                user: { id: 'dev-1', username: role === 'public' ? 'public' : 'developer', role, storeKeys: role === 'store' ? ['tongying'] : [] },
+                user,
                 onNavigate,
                 onSelectStore: (store) => { document.documentElement.dataset.store = store },
               }),
             ),
+            React.createElement(MobileBottomNav, {
+              view: 'overview',
+              user,
+              onNavigate,
+              onMore: () => { document.documentElement.dataset.sidebar = 'open' },
+            }),
           )
         ),
       )

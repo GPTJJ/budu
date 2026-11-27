@@ -1,9 +1,49 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, MapPin, Menu, ChevronDown, RefreshCw } from 'lucide-react'
+import { ArrowLeft, MapPin, Menu, ChevronDown, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import { allStores } from '../utils/selectors'
 import CalendarPicker from './CalendarPicker'
 import NotificationBell from './NotificationBell'
 import { t } from '../utils/text'
+import { usePrivacyMode } from '../visibility'
+
+function PrivacyToggleButton({ variant = 'mobile' }) {
+  const { effectivePrivacy, isLockedByRole, autoLockRemainingSec, togglePrivacyMode } = usePrivacyMode()
+  const label = isLockedByRole
+    ? t('当前账号固定开启防窥保护')
+    : effectivePrivacy
+      ? t('防窥已开启，点击显示金额（Shift+H）')
+      : t('明文显示中，点击开启防窥（Shift+H）')
+
+  const sizeClass = variant === 'desktop' ? 'hidden h-11 min-w-11 px-2.5 md:inline-flex' : 'inline-flex h-10 min-w-10 px-2 md:hidden'
+
+  return (
+    <button
+      type="button"
+      data-testid={`privacy-toggle-${variant}`}
+      onClick={() => {
+        if (!isLockedByRole) togglePrivacyMode()
+      }}
+      disabled={isLockedByRole}
+      aria-pressed={!effectivePrivacy}
+      aria-label={label}
+      title={label}
+      className={`${sizeClass} shrink-0 items-center justify-center gap-1 rounded-lg border shadow-sm transition ${
+        isLockedByRole
+          ? 'cursor-not-allowed border-slate-200/70 bg-slate-50 text-slate-300'
+          : effectivePrivacy
+            ? 'border-slate-200/70 bg-white/80 text-slate-500 hover:border-budu-300 hover:text-budu-500'
+            : 'border-budu-200 bg-budu-50 text-budu-600 hover:border-budu-300 hover:bg-budu-100/70'
+      }`}
+    >
+      {effectivePrivacy ? <EyeOff className="h-4 w-4 shrink-0" /> : <Eye className="h-4 w-4 shrink-0" />}
+      {!effectivePrivacy && autoLockRemainingSec > 0 && (
+        <span className="text-[10px] font-bold tabular-nums leading-none text-budu-600">
+          {autoLockRemainingSec}s
+        </span>
+      )}
+    </button>
+  )
+}
 
 export default function Header({
   month,
@@ -80,6 +120,8 @@ export default function Header({
           </div>
         </div>
 
+        <PrivacyToggleButton variant="mobile" />
+
         <button
           onClick={onRefresh}
           className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200/70 bg-white/80 text-slate-500 shadow-sm transition hover:border-budu-300 hover:text-budu-500 md:hidden"
@@ -130,6 +172,8 @@ export default function Header({
               </label>
             </>
           )}
+
+          <PrivacyToggleButton variant="desktop" />
 
           <button
             onClick={onRefresh}
