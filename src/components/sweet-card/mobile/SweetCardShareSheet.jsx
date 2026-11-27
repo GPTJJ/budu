@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Copy, Loader2, MessageCircle, X } from 'lucide-react'
 import { formatCents } from '../../../utils/pos'
 import {
@@ -20,42 +20,84 @@ export default function SweetCardShareSheet({ open, card, onClose, onPrepareCred
   const [notice, setNotice] = useState('')
   const [copied, setCopied] = useState(false)
   const inMiniProgram = isWechatMiniProgramWebview()
+  const cardId = card?.id || ''
   const amountText = card ? formatCents(card.initialAmountCents) : ''
 
+  const cardRef = useRef(card)
+  const onCloseRef = useRef(onClose)
+  const onPrepareCredentialRef = useRef(onPrepareCredential)
+  const activeRunRef = useRef(0)
+  const miniTimerRef = useRef(null)
+  cardRef.current = card
+  onCloseRef.current = onClose
+  onPrepareCredentialRef.current = onPrepareCredential
+
+  const clearMiniTimer = useCallback(() => {
+    if (miniTimerRef.current) {
+      window.clearTimeout(miniTimerRef.current)
+      miniTimerRef.current = null
+    }
+  }, [])
+
   const prepare = useCallback(async () => {
-    if (!card) return
+    const targetCard = cardRef.current
+    if (!targetCard) return
+    clearMiniTimer()
+    const runId = ++activeRunRef.current
+    const isStale = () => activeRunRef.current !== runId
+    const currentAmountText = formatCents(targetCard.initialAmountCents)
+
     setStage('preparing'); setError(''); setCopied(false); setLink(''); setNotice('')
     try {
-      let credentialId = card.delivery?.activeClaimCredentialId || ''
-      if (!credentialId && onPrepareCredential) credentialId = await onPrepareCredential(card)
+      let credentialId = targetCard.delivery?.activeClaimCredentialId || ''
+      if (!credentialId && onPrepareCredentialRef.current) {
+        credentialId = await onPrepareCredentialRef.current(targetCard)
+      }
+      if (isStale()) return
       if (!credentialId) {
         setStage('failed'); setError('这张卡还没有可用的领取凭据，请先在卡片详情生成电子卡。'); return
       }
       if (inMiniProgram) {
         // 环境 A 只跳「原生转发承载页」，不跳领取页、不带 auto 标记：发卡人不会误领。
         const target = buildSharePath(credentialId, {
-          cardId: card.id, amountText, note: card.recipientNote || SWEET_CARD_DEFAULT_NOTE,
+          cardId: targetCard.id, amountText: currentAmountText, note: targetCard.recipientNote || SWEET_CARD_DEFAULT_NOTE,
         })
         if (!target) { setStage('failed'); setError('领取凭据引用无效，请重新生成电子卡。'); return }
         setStage('mini-ready')
-        window.setTimeout(() => {
+        miniTimerRef.current = window.setTimeout(() => {
+          miniTimerRef.current = null
+          if (isStale()) return
           if (!navigateInsideMiniProgram(target)) { setStage('failed'); setError('小程序转发通道不可用，请改用外部浏览器转发。'); return }
-          onClose?.()
+          onCloseRef.current?.()
         }, 240)
         return
       }
-      const share = await requestClaimShareLink(card.id)
+      const share = await requestClaimShareLink(targetCard.id)
+      if (isStale()) return
       setLink(share.link)
       setLinkKind(share.kind)
       if (share.notice === 'CLAIM_RELEASE_PAGE_PENDING') setNotice(share.noticeDetail || '小程序正式版还没更新到免密领取页，好友打开会看到旧版领取页')
       setStage('browser-ready')
     } catch (e) {
+      if (isStale()) return
       setStage('failed')
       setError(shareFailureMessage(e))
     }
-  }, [card, inMiniProgram, onClose, onPrepareCredential, amountText])
+  }, [clearMiniTimer, inMiniProgram])
 
-  useEffect(() => { if (open) prepare(); else { setStage('idle'); setError(''); setLink(''); setNotice(''); setCopied(false) } }, [open, prepare])
+  useEffect(() => {
+    if (open && cardId) {
+      prepare()
+    } else {
+      activeRunRef.current += 1
+      clearMiniTimer()
+      setStage('idle'); setError(''); setLink(''); setNotice(''); setCopied(false)
+    }
+    return () => {
+      activeRunRef.current += 1
+      clearMiniTimer()
+    }
+  }, [open, cardId, prepare, clearMiniTimer])
 
   const copyAndOpen = async () => {
     const text = shareCopy(amountText, link)

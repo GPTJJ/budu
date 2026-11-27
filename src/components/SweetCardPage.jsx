@@ -124,30 +124,41 @@ export default function SweetCardPage({ user, onBack }) {
     setRules(nextRules)
   }
 
-  const generateClaimAsset = async (cardId, reissue) => {
+  const generateClaimAsset = useCallback(async (cardId, reissue) => {
     const result = await api(`/v2/sweet-cards/cards/${cardId}/claim-presentation`, {
       method: 'POST',
       body: JSON.stringify({ carrierType: 'ELECTRONIC', holderVerificationConfirmed: true, separateProofDelivery: true, reissueConfirmed: reissue === true }),
     })
     return result
-  }
+  }, [])
 
-  const prepareCredential = async (card) => {
+  const prepareCredential = useCallback(async (card) => {
     setSaving(true)
     try {
       const fresh = await api(`/v2/sweet-cards/cards/${card.id}`)
       const active = fresh.card?.delivery?.activeClaimCredentialId
-      if (active) { setDetail(fresh.card); return active }
+      if (active) {
+        setDetail((prev) => (prev?.id === fresh.card.id ? fresh.card : prev))
+        return active
+      }
       const generated = await generateClaimAsset(card.id, fresh.card?.delivery?.claimCredentialStatus === 'ACTIVE')
-      await load()
       const refreshed = await api(`/v2/sweet-cards/cards/${card.id}`)
-      setDetail(refreshed.card)
-      return generated?.claimAsset?.id || refreshed.card?.delivery?.activeClaimCredentialId || ''
+      const nextCard = refreshed.card
+      if (nextCard) {
+        setDetail((prev) => (prev?.id === nextCard.id ? nextCard : prev))
+        setCards((prev) => prev.map((item) => (item.id === nextCard.id ? { ...item, ...nextCard } : item)))
+      }
+      return generated?.claimAsset?.id || nextCard?.delivery?.activeClaimCredentialId || ''
     } catch (e) {
       flash(sweetCardClaimGenerationErrorLabel(e))
       return ''
     } finally { setSaving(false) }
-  }
+  }, [flash, generateClaimAsset])
+
+  const handleShareClose = useCallback(() => {
+    setShareCard(null)
+    load()
+  }, [load])
 
   const openShare = async (card) => {
     setError('')
@@ -278,7 +289,7 @@ export default function SweetCardPage({ user, onBack }) {
       <SweetCardShareSheet
         open={Boolean(shareCard)}
         card={shareCard}
-        onClose={() => { setShareCard(null); load() }}
+        onClose={handleShareClose}
         onPrepareCredential={prepareCredential}
         onToast={flash}
       />
