@@ -200,6 +200,10 @@ export async function issueSweetCardBatch({
             actorName,
             metadata: { batchId },
           } },
+          onlinePolicy: { create: {
+            enabled: true,
+            updatedById: actorId,
+          } },
         } })
       }
       await tx.sweetCardAuditLog.create({ data: {
