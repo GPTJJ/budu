@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Ban, ChevronRight, Gift, Lock, Plus, QrCode, RefreshCw, Share2, Snowflake, Sun } from 'lucide-react'
+import { Archive, ArchiveRestore, Ban, ChevronRight, Gift, Lock, Plus, QrCode, RefreshCw, Share2, Snowflake, Sun } from 'lucide-react'
 import { api } from '../utils/api'
 import { formatCents } from '../utils/pos'
 import { hasSweetCardCapability, SWEET_CARD_CAPABILITIES } from '../../shared/accountPermissions'
@@ -116,6 +116,32 @@ export default function SweetCardPage({ user, onBack }) {
     if (!window.confirm('作废后该卡不能继续使用，余额与历史记录保留。确认作废？')) return
     setDetail(null)
     await transition(id, 'void')
+  }
+
+  const archiveBatch = async (batchId, cardCount = 1) => {
+    if (!batchId) return
+    const msg = cardCount > 1
+      ? `归档后该卡所属批次（共 ${cardCount} 张）将移入「归档」分类，不计入日常列表。确认归档？`
+      : '归档后该卡将移入「归档」分类，不计入日常列表。确认归档？'
+    if (!window.confirm(msg)) return
+    setSaving(true); setError('')
+    try {
+      await api(`/v2/sweet-cards/batches/${batchId}/archive`, { method: 'POST', body: JSON.stringify({}) })
+      setDetail(null)
+      flash('已移入归档')
+      await load()
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
+  }
+
+  const restoreBatch = async (batchId) => {
+    if (!batchId) return
+    setSaving(true); setError('')
+    try {
+      await api(`/v2/sweet-cards/batches/${batchId}/restore`, { method: 'POST', body: JSON.stringify({}) })
+      setDetail(null)
+      flash('已从归档恢复')
+      await load()
+    } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
 
   const saveRules = async (blockedCategoryIds) => {
@@ -252,6 +278,11 @@ export default function SweetCardPage({ user, onBack }) {
                       <p className="mt-0.5 text-[10px] text-slate-400">{batch.cardCount} 张 · {formatCents(batch.totalInitialAmountCents)} · 余额 {formatCents(batch.metrics?.balanceCents || '0')}</p>
                     </div>
                     <a href={`/api/v2/sweet-cards/batches/${batch.id}/export`} className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-slate-50 px-2.5 py-1.5 text-[11px] font-bold text-slate-600"><QrCode className="h-3 w-3" />二维码包</a>
+                    {canManage && (scope === 'ARCHIVED' ? (
+                      <button type="button" disabled={saving} onClick={() => restoreBatch(batch.id)} className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-emerald-50 px-2.5 py-1.5 text-[11px] font-bold text-emerald-700 disabled:opacity-50"><ArchiveRestore className="h-3 w-3" />恢复</button>
+                    ) : (
+                      <button type="button" disabled={saving} onClick={() => archiveBatch(batch.id, batch.cardCount)} className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-slate-100 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 disabled:opacity-50"><Archive className="h-3 w-3" />归档</button>
+                    ))}
                   </div>
                 ))}
               </div>}
@@ -298,11 +329,15 @@ export default function SweetCardPage({ user, onBack }) {
         card={detail}
         saving={saving}
         canManage={canManage}
+        archived={scope === 'ARCHIVED'}
+        batchCardCount={batches.find((b) => b.id === detail.batchId)?.cardCount || 1}
         onClose={() => setDetail(null)}
         onShare={() => openShare(detail)}
         onGenerate={() => generateClaimAsset(detail.id, detail.delivery?.claimCredentialStatus === 'ACTIVE').then(async () => { await load(); await openDetail(detail.id); flash('电子卡已生成') }).catch((e) => flash(sweetCardClaimGenerationErrorLabel(e)))}
         onTransition={(action) => transition(detail.id, action)}
         onVoid={() => voidCard(detail.id)}
+        onArchive={() => archiveBatch(detail.batchId, batches.find((b) => b.id === detail.batchId)?.cardCount || 1)}
+        onRestore={() => restoreBatch(detail.batchId)}
       />}
 
       {toast && <div role="status" className="fixed inset-x-0 bottom-24 z-[160] mx-auto w-fit max-w-[86%] rounded-full bg-slate-900/90 px-4 py-2 text-[12px] font-bold text-white shadow-lg">{toast}</div>}
@@ -311,8 +346,9 @@ export default function SweetCardPage({ user, onBack }) {
   )
 }
 
-function CardDetailSheet({ card, saving, canManage, onClose, onShare, onGenerate, onTransition, onVoid }) {
+function CardDetailSheet({ card, saving, canManage, archived, batchCardCount, onClose, onShare, onGenerate, onTransition, onVoid, onArchive, onRestore }) {
   const claimed = Boolean(card.claimedAt)
+  const isVoid = card.status === 'VOID'
   const rows = [
     ['面额', formatCents(card.initialAmountCents)],
     ['余额', formatCents(card.balanceCents)],
@@ -347,11 +383,16 @@ function CardDetailSheet({ card, saving, canManage, onClose, onShare, onGenerate
           </dl>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
-            {!claimed && <button type="button" disabled={saving} onClick={onShare} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-budu-500 text-[13px] font-black text-white disabled:opacity-50"><Share2 className="h-4 w-4" />转发给好友</button>}
-            <button type="button" disabled={saving} onClick={onGenerate} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-slate-100 text-[13px] font-black text-slate-700 disabled:opacity-50"><Gift className="h-4 w-4" />{card.delivery?.claimCredentialStatus === 'ACTIVE' ? '重新生成电子卡' : '生成电子卡'}</button>
+            {!claimed && !isVoid && <button type="button" disabled={saving} onClick={onShare} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-budu-500 text-[13px] font-black text-white disabled:opacity-50"><Share2 className="h-4 w-4" />转发给好友</button>}
+            {!isVoid && <button type="button" disabled={saving} onClick={onGenerate} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-slate-100 text-[13px] font-black text-slate-700 disabled:opacity-50"><Gift className="h-4 w-4" />{card.delivery?.claimCredentialStatus === 'ACTIVE' ? '重新生成电子卡' : '生成电子卡'}</button>}
             {card.status === 'ACTIVE' && <button type="button" disabled={saving} onClick={() => onTransition('freeze')} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-white text-[13px] font-bold text-slate-600 ring-1 ring-slate-200"><Snowflake className="h-4 w-4" />冻结</button>}
             {card.status === 'FROZEN' && <button type="button" disabled={saving} onClick={() => onTransition('unfreeze')} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-white text-[13px] font-bold text-slate-600 ring-1 ring-slate-200"><Sun className="h-4 w-4" />解冻</button>}
             {card.status === 'CREATED' && <button type="button" disabled={saving} onClick={() => onTransition('activate')} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-white text-[13px] font-bold text-slate-600 ring-1 ring-slate-200"><Lock className="h-4 w-4" />手动激活</button>}
+            {canManage && card.batchId && (archived ? (
+              <button type="button" disabled={saving} onClick={onRestore} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-emerald-50 text-[13px] font-black text-emerald-700 disabled:opacity-50"><ArchiveRestore className="h-4 w-4" />从归档恢复</button>
+            ) : (
+              <button type="button" disabled={saving} onClick={onArchive} className="flex h-11 items-center justify-center gap-1.5 rounded-2xl bg-slate-100 text-[13px] font-black text-slate-700 disabled:opacity-50"><Archive className="h-4 w-4" />{batchCardCount > 1 ? `归档所属批次(${batchCardCount}张)` : '归档'}</button>
+            ))}
           </div>
 
           {(card.ledger || []).length > 0 && <details className="mt-4 rounded-2xl bg-slate-50 px-3.5 py-2.5">
